@@ -46,7 +46,7 @@ AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms) {
     r->y = bm.y;
     r->w = bm.w;
     r->h = bm.h;
-    r->nb_colors = 16;
+    r->nb_colors = bm.nb_colors > 0 ? bm.nb_colors : 16;
     r->type = SUBTITLE_BITMAP;
 
     // Allocate bitmap plane
@@ -61,10 +61,11 @@ AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms) {
     memcpy(r->data[0], bm.idxbuf, bm.w * bm.h);
 
     // Allocate palette plane
-    r->data[1] = av_mallocz(AVPALETTE_SIZE);
-    r->linesize[1] = AVPALETTE_SIZE;
+    int palette_bytes = FFMIN(r->nb_colors * 4, AVPALETTE_SIZE);
+    r->data[1] = av_mallocz(palette_bytes);
+    r->linesize[1] = palette_bytes;
     if (bm.palette) {
-        memcpy(r->data[1], bm.palette, AVPALETTE_SIZE);
+        memcpy(r->data[1], bm.palette, palette_bytes);
     }
 
     sub->start_display_time = 0;
