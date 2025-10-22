@@ -2,6 +2,12 @@
 #include "debug_png.h"
 #include <cairo/cairo.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <string.h>
 
 void save_bitmap_png(const Bitmap *bm, const char *filename) {
     if (!bm || !bm->idxbuf || !bm->palette) return;
@@ -20,8 +26,62 @@ void save_bitmap_png(const Bitmap *bm, const char *filename) {
     }
 
     cairo_surface_mark_dirty(surface);
-    cairo_surface_write_to_png(surface, filename);
+    // Ensure parent directory exists
+    char *dirend = strrchr(filename, '/');
+    if (dirend) {
+        size_t dirlen = dirend - filename;
+        char dirbuf[PATH_MAX];
+        if (dirlen >= sizeof(dirbuf)) dirlen = sizeof(dirbuf)-1;
+        memcpy(dirbuf, filename, dirlen);
+        dirbuf[dirlen] = '\0';
+
+        // create parents recursively
+        char tmp[PATH_MAX];
+        tmp[0] = '\0';
+        for (char *p = dirbuf; *p; p++) {
+            size_t len = strlen(tmp);
+            tmp[len] = *p;
+            tmp[len+1] = '\0';
+            if (*p == '/') {
+                if (mkdir(tmp, 0755) < 0 && errno != EEXIST) {
+                    // ignore errors here; we'll detect write failure below
+                }
+            }
+        }
+        // final directory
+        if (strlen(tmp) > 0) {
+            if (mkdir(tmp, 0755) < 0 && errno != EEXIST) {
+                // ignore, will be reported by cairo if write fails
+            }
+        }
+    }
+
+    cairo_status_t status = cairo_surface_write_to_png(surface, filename);
     cairo_surface_destroy(surface);
 
-    printf("Wrote debug PNG: %s\n", filename);
+    char fullpath[PATH_MAX];
+    if (getcwd(fullpath, sizeof(fullpath)) != NULL) {
+        size_t need = strlen(fullpath) + 1 + strlen(filename) + 1;
+        char *expected_alloc = malloc(need);
+        if (expected_alloc) {
+            snprintf(expected_alloc, need, "%s/%s", fullpath, filename);
+            if (status == CAIRO_STATUS_SUCCESS) {
+                fprintf(stderr, "Wrote debug PNG: %s (expected %s)\n", filename, expected_alloc);
+            } else {
+                const char *s = cairo_status_to_string(status);
+                fprintf(stderr, "Failed to write PNG %s: %s (expected %s)\n", filename, s, expected_alloc);
+            }
+            free(expected_alloc);
+        } else {
+            if (status == CAIRO_STATUS_SUCCESS)
+                fprintf(stderr, "Wrote debug PNG: %s\n", filename);
+            else
+                fprintf(stderr, "Failed to write PNG %s: %s\n", filename, cairo_status_to_string(status));
+        }
+    } else {
+        if (status == CAIRO_STATUS_SUCCESS)
+            fprintf(stderr, "Wrote debug PNG: %s\n", filename);
+        else
+            fprintf(stderr, "Failed to write PNG %s: %s\n", filename, cairo_status_to_string(status));
+    }
 }

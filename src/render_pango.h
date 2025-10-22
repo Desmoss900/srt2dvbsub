@@ -7,6 +7,7 @@ typedef struct {
     uint8_t *idxbuf;
     uint32_t *palette;
     int w,h,x,y;
+    int nb_colors;
 } Bitmap;
 
 Bitmap render_text_pango(const char *markup,
@@ -21,5 +22,8 @@ Bitmap render_text_pango(const char *markup,
 char* srt_to_pango_markup(const char *srt_text);
 
 void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a);
+
+/* Cleanup resources allocated by render_pango (call before FcFini()) */
+void render_pango_cleanup(void);
 
 #endif

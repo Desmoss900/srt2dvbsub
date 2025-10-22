@@ -142,6 +142,29 @@ void render_ass_done(ASS_Library *lib, ASS_Renderer *renderer) {
     if (lib) ass_library_done(lib);
 }
 
+// Backwards-compatible wrappers
+void render_ass_free_track(ASS_Track *track) {
+    if (!track) return;
+    // Free events and text within the track
+    if (track->events) {
+        for (int i = 0; i < track->n_events; i++) {
+            if (track->events[i].Text) free(track->events[i].Text);
+        }
+        free(track->events);
+        track->events = NULL;
+        track->n_events = 0;
+    }
+    // libass does not expose a public free for ASS_Track; assume caller will discard pointer
+}
+
+void render_ass_free_renderer(ASS_Renderer *renderer) {
+    if (renderer) ass_renderer_done(renderer);
+}
+
+void render_ass_free_lib(ASS_Library *lib) {
+    if (lib) ass_library_done(lib);
+}
+
 void render_ass_set_style(ASS_Track *track,
                           const char *font, int size,
                           const char *fg, const char *outline, const char *shadow)

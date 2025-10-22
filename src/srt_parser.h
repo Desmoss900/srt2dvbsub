@@ -1,8 +1,10 @@
+
 #ifndef SRT_PARSER_H
 #define SRT_PARSER_H
 
-#include <stdint.h>
 #include <stdio.h>
+#include <stdint.h>
+
 
 typedef struct {
     int64_t start_ms, end_ms;

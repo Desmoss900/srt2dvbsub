@@ -30,3 +30,8 @@ void render_ass_set_style(ASS_Track *track,
                           const char *fg, const char *outline, const char *shadow);
 
 void render_ass_debug_styles(ASS_Track *track);                          
+
+// Convenience/free wrappers matching older name expectations
+void render_ass_free_track(ASS_Track *track);
+void render_ass_free_renderer(ASS_Renderer *renderer);
+void render_ass_free_lib(ASS_Library *lib);
