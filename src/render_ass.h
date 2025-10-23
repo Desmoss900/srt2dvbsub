@@ -1,7 +1,18 @@
 #pragma once
 #include <stdint.h>
-#include <ass/ass.h>
 #include "dvb_sub.h"   // for Bitmap struct
+
+/* If libass is available (configure --enable-ass) include its headers.
+ * Otherwise provide opaque typedefs so callers can compile and link against
+ * a stub implementation (render_ass_stub.c) without requiring libass.
+ */
+#ifdef HAVE_LIBASS
+#include <ass/ass.h>
+#else
+typedef struct ASS_Library ASS_Library;
+typedef struct ASS_Renderer ASS_Renderer;
+typedef struct ASS_Track ASS_Track;
+#endif
 
 // Initialize the libass library + renderer
 ASS_Library* render_ass_init();

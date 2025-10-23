@@ -15,6 +15,8 @@
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavcodec/packet.h>
+#include "cpu_count.h"
+#include "runtime_opts.h"
 #include <libavutil/mem.h>
 
 #include "srt_parser.h"
@@ -291,8 +293,11 @@ int main(int argc, char **argv) {
     long pkt_count = 0;
     long subs_found = 0;
 
-    FILE *qc=fopen("qc_log.txt","w");
-    if(!qc){ perror("qc_log.txt"); return 1; }
+    FILE *qc = NULL;
+    if (qc_only) {
+        qc = fopen("qc_log.txt", "w");
+        if (!qc) { perror("qc_log.txt"); return 1; }
+    }
 
     // Open input
     avformat_network_init();
@@ -358,9 +363,11 @@ int main(int argc, char **argv) {
         fflush(stdout);
     }
 
-    // Ensure pngs directory exists for debug output
-    if (mkdir("pngs", 0755) < 0 && errno != EEXIST) {
-        fprintf(stderr, "Warning: could not create pngs/ directory: %s\n", strerror(errno));
+    // Ensure pngs directory exists for debug output only when debug level > 0
+    if (debug_level > 0) {
+        if (mkdir("pngs", 0755) < 0 && errno != EEXIST) {
+            fprintf(stderr, "Warning: could not create pngs/ directory: %s\n", strerror(errno));
+        }
     }
 
     /* Track first video packet PTS (90k) seen during demux to use as an alternate reference */
@@ -469,7 +476,19 @@ int main(int argc, char **argv) {
         tracks[ntracks].codec_ctx->width = video_w;
         tracks[ntracks].codec_ctx->height = video_h;
 
-        if (avcodec_open2(tracks[ntracks].codec_ctx, codec, NULL) < 0) {
+    /* Configure encoder threading: prefer auto CPU count */
+        if (enc_threads <= 0) {
+            tracks[ntracks].codec_ctx->thread_count = get_cpu_count();
+        } else {
+            tracks[ntracks].codec_ctx->thread_count = enc_threads;
+        }
+#if defined(FF_THREAD_FRAME)
+    tracks[ntracks].codec_ctx->thread_type = FF_THREAD_FRAME;
+#elif defined(FF_THREAD_SLICE)
+    tracks[ntracks].codec_ctx->thread_type = FF_THREAD_SLICE;
+#endif
+
+    if (avcodec_open2(tracks[ntracks].codec_ctx, codec, NULL) < 0) {
             fprintf(stderr, "Failed to open DVB subtitle encoder for track %s\n", lang);
             return -1;
         }
@@ -1067,7 +1086,7 @@ int main(int argc, char **argv) {
 
     /* deinit network layer if we initialized it */
     avformat_network_deinit();
-    fclose(qc);
+    if (qc) fclose(qc);
 
     /* free duplicated option strings */
     if (srt_list) free(srt_list);

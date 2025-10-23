@@ -12,13 +12,16 @@
 #include <time.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include "cpu_count.h"
 #include "srt_parser.h"
 #include "render_pango.h"
 #include "render_ass.h"
+#include "render_pool.h"
 #include "dvb_sub.h"
 #include "qc.h"
 #include "bench.h"
 #include "debug_png.h"
+#include "runtime_opts.h"
 #ifdef HAVE_FONTCONFIG
 #include <fontconfig/fontconfig.h>
 #endif
@@ -113,7 +116,13 @@ static void print_help(void) {
     printf("      --fgcolor #RRGGBB    Text color\n");
     printf("      --outlinecolor #RRGGBB Outline color\n");
     printf("      --shadowcolor #AARRGGBB Shadow color (alpha optional)\n");
+#ifdef HAVE_LIBASS
     printf("      --ass                Enable libass rendering\n");
+#endif
+    printf("      --enc-threads N      Set encoder thread count (0=auto)\n");
+    printf("      --render-threads N   Parallel render workers (0=single-thread)\n");
+    printf("      --ssaa N             Force supersample factor (1..6) (default 6)\n");
+    printf("      --no-unsharp         Disable the final unsharp pass to speed rendering\n");
     printf("      --help, -h, -?       Show this help and exit\n\n");
     printf("Accepted DVB language codes:\n");
     printf("  Code  English / Native\n");
@@ -144,6 +153,9 @@ typedef struct {
 int debug_level = 0; // Global debug level
 int use_ass = 0;
 int video_w=720, video_h=480; //Set the min video width and height...this will be overridden by libav probe
+
+/* Performance / quality knobs (defined in runtime_opts.c) */
+/* enc_threads, render_threads, ssaa_override, no_unsharp are declared in runtime_opts.h */
 
 static int __srt_png_seq = 0;
 
@@ -230,7 +242,8 @@ int main(int argc,char**argv){
 
     // Subtitle style config (shared for ASS and Pango)
     const char *cli_font        = "Robooto";
-    int cli_fontsize            = 24;
+    /* 0 means "not set" — let render_pango compute dynamic sizing based on resolution */
+    int cli_fontsize            = 0;
     const char *cli_fgcolor     = "#FFFFFF";    // hex for Pango
     const char *cli_outlinecolor= "#000000";
     const char *cli_shadowcolor = "#64000000";
@@ -249,14 +262,20 @@ int main(int argc,char**argv){
         {"debug",     required_argument, 0, 1002},
         {"qc-only",   no_argument,       0, 1003},
         {"bench",     no_argument,       0, 1004},
-        {"palette",   required_argument, 0, 1005},
-        {"ass",       no_argument,       0, 1006},
+    {"palette",   required_argument, 0, 1005},
+#ifdef HAVE_LIBASS
+    {"ass",       no_argument,       0, 1006},
+#endif
         {"font",      required_argument, 0, 1007},
         {"fontsize",  required_argument, 0, 1008},
         {"fgcolor",   required_argument, 0, 1009},
         {"outlinecolor", required_argument, 0, 1010},
         {"shadowcolor",  required_argument, 0, 1011},
         {"delay",     required_argument, 0, 1012},        
+        {"enc-threads", required_argument, 0, 1013},
+        {"render-threads", required_argument, 0, 1014},
+        {"ssaa", required_argument, 0, 1015},
+        {"no-unsharp", no_argument, 0, 1016},
         {0,0,0,0}
     };
 
@@ -277,27 +296,24 @@ int main(int argc,char**argv){
         case 1002: debug_level=atoi(optarg); break;
         case 1003: qc_only=1; break;
         case 1004: bench_mode=1; bench.enabled=1; break;
-        case 1005: palette_mode=strdup(optarg); break;
-        case 1006: use_ass=1; break;
+    case 1005: palette_mode=strdup(optarg); break;
+#ifdef HAVE_LIBASS
+    case 1006: use_ass=1; break;
+#endif
         case 1007: cli_font = strdup(optarg); break;
         case 1008: cli_fontsize = atoi(optarg); break;
         case 1009: cli_fgcolor = strdup(optarg); break;
         case 1010: cli_outlinecolor = strdup(optarg); break;
         case 1011: cli_shadowcolor = strdup(optarg); break;
         case 1012: subtitle_delay_ms = atoi(optarg); break;                
+    case 1013: enc_threads = atoi(optarg); break;
+    case 1014: render_threads = atoi(optarg); break;
+    case 1015: ssaa_override = atoi(optarg); break;
+    case 1016: no_unsharp = 1; break;
         default:
-            fprintf(stderr,
-                "Usage: mux_srt_dvb --input in.mp4 --output out.ts "
-                "--srt subs1.srt[,subs2.srt] --languages eng[,deu] "
-                "[--palette broadcast|greyscale|ebu-broadcast] [options]\n"
-                "  --ass                       Enable libass rendering\n"
-                "  --font FONTNAME             Set font family\n"
-                "  --fontsize N                Set font size (px)\n"
-                "  --fgcolor \"#RRGGBB\"         Set text color\n"
-                "  --outlinecolor \"#RRGGBB\"    Set outline color\n"
-                "  --shadowcolor \"#RRGGBB\"     Set shadow color\n"
-                "  --delay MS                  Subtitle delay in ms (default: 300)\n"
-                "  --help, -h, -?              Show this help and exit\n");
+            /* Use the central help printer so the text remains consistent
+             * (and respects whether libass was enabled at configure-time). */
+            print_help();
             return 1;
         }
     }
@@ -346,6 +362,21 @@ int main(int argc,char**argv){
 
     bench_start();
 
+    /* Apply runtime knobs to pango renderer */
+    if (ssaa_override > 0) render_pango_set_ssaa_override(ssaa_override);
+    if (no_unsharp) render_pango_set_no_unsharp(1);
+
+    /* Initialize render pool if requested */
+    if (render_threads > 0) {
+        if (render_pool_init(render_threads) != 0) {
+            fprintf(stderr, "Warning: failed to initialize render pool with %d threads\n", render_threads);
+            render_threads = 0;
+        }
+        else {
+            atexit(render_pool_shutdown);
+        }
+    }
+
     /* Install simple signal handlers so Ctrl-C triggers orderly shutdown */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -353,12 +384,17 @@ int main(int argc,char**argv){
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
-    FILE *qc=fopen("qc_log.txt","w");
-    if(!qc){ perror("qc_log.txt"); return 1; }
+    FILE *qc = NULL;
+    if (qc_only) {
+        qc = fopen("qc_log.txt", "w");
+        if (!qc) { perror("qc_log.txt"); return 1; }
+    }
 
-    /* Ensure output directory for PNG debug files exists */
-    if (mkdir("pngs", 0755) < 0 && errno != EEXIST) {
-        fprintf(stderr, "Warning: could not create pngs/ directory: %s\n", strerror(errno));
+    /* Ensure output directory for PNG debug files exists only when debug_level > 0 */
+    if (debug_level > 0) {
+        if (mkdir("pngs", 0755) < 0 && errno != EEXIST) {
+            fprintf(stderr, "Warning: could not create pngs/ directory: %s\n", strerror(errno));
+        }
     }
 
     // ---------- QC-only ----------
@@ -378,7 +414,7 @@ int main(int argc,char**argv){
             tok=strtok(NULL,",");
             tok_lang=strtok(NULL,",");
         }
-        fclose(qc);
+    if (qc) fclose(qc);
         if(bench_mode) bench_report();
         return 0;
     }
@@ -530,6 +566,18 @@ int main(int argc,char**argv){
             tracks[ntracks].codec_ctx->time_base = (AVRational){1,90000};
             tracks[ntracks].codec_ctx->width  = video_w;
             tracks[ntracks].codec_ctx->height = video_h;
+
+            /* Configure encoder threading: allow user override (enc_threads==0 => auto) */
+            if (enc_threads <= 0) {
+                tracks[ntracks].codec_ctx->thread_count = get_cpu_count();
+            } else {
+                tracks[ntracks].codec_ctx->thread_count = enc_threads;
+            }
+#if defined(FF_THREAD_FRAME)
+            tracks[ntracks].codec_ctx->thread_type = FF_THREAD_FRAME;
+#elif defined(FF_THREAD_SLICE)
+            tracks[ntracks].codec_ctx->thread_type = FF_THREAD_SLICE;
+#endif
 
             if (avcodec_open2(tracks[ntracks].codec_ctx, codec, NULL) < 0) {
                 fprintf(stderr, "Failed to open DVB subtitle encoder for track %s\n", tok);
@@ -698,12 +746,59 @@ int main(int argc,char**argv){
                     if ((video_w <= 0 || video_h <= 0) && debug_level > 0) {
                         fprintf(stderr, "[main] Warning: video size unknown, using fallback %dx%d for rendering\n", render_w, render_h);
                     }
-                    bm = render_text_pango(markup,
-                                           render_w, render_h,
-                                           cli_fontsize, cli_font,
-                                           cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
-                                           used_align,
-                                           palette_mode);
+                    if (render_threads > 0) {
+                        /* Attempt to fetch an already-rendered result keyed by track and cue.
+                         * If not present, submit a small prefetch window (including current cue)
+                         * and try again. If still not ready, fall back to synchronous render. */
+                        Bitmap tmpb = {0};
+                        int got = render_pool_try_get(t, tracks[t].cur_sub, &tmpb);
+                        if (got == 1) {
+                            bm = tmpb; /* use the async result */
+                        } else if (got == 0) {
+                            /* job exists but not finished yet; perform a blocking render to avoid waiting forever */
+                            bm = render_pool_render_sync(markup,
+                                                        render_w, render_h,
+                                                        cli_fontsize, cli_font,
+                                                        cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                                        used_align,
+                                                        palette_mode);
+                        } else {
+                            /* no job exists yet for this cue: submit prefetch window */
+                            const int PREFETCH_WINDOW = 8;
+                            for (int pi = 0; pi < PREFETCH_WINDOW; ++pi) {
+                                int qi = tracks[t].cur_sub + pi;
+                                if (qi >= tracks[t].count) break;
+                                char *pm = srt_to_pango_markup(tracks[t].entries[qi].text);
+                                /* submit async job; render_pool makes its own copy */
+                                render_pool_submit_async(t, qi,
+                                                        pm,
+                                                        render_w, render_h,
+                                                        cli_fontsize, cli_font,
+                                                        cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                                        used_align,
+                                                        palette_mode);
+                                free(pm);
+                            }
+                            /* try to fetch again; if still not present, fallback to sync render */
+                            if (render_pool_try_get(t, tracks[t].cur_sub, &tmpb) == 1) {
+                                bm = tmpb;
+                            } else {
+                                bm = render_pool_render_sync(markup,
+                                                            render_w, render_h,
+                                                            cli_fontsize, cli_font,
+                                                            cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                                            used_align,
+                                                            palette_mode);
+                            }
+                        }
+                    } else {
+                        bm = render_text_pango(markup,
+                                               render_w, render_h,
+                                               cli_fontsize, cli_font,
+                                               cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                               used_align,
+                                               palette_mode);
+                    }
                     if (bench_mode) { bench.t_render_us += bench_now() - t1; bench.cues_rendered++; }
                     free(markup);
                 } else {
@@ -855,6 +950,8 @@ int main(int argc,char**argv){
     av_write_trailer(out_fmt);
 
     for (int t=0; t<ntracks; t++) {
+        /* Ensure render workers are stopped before releasing Pango/fontmap */
+        render_pool_shutdown();
         /* Ensure Pango/fontmap resources are released before FcFini */
         render_pango_cleanup();
 
@@ -882,8 +979,6 @@ int main(int argc,char**argv){
 
     if (ass_renderer) render_ass_free_renderer(ass_renderer);
     if (ass_lib) render_ass_free_lib(ass_lib);
-
-    fc_fini();
     /* free CLI strdup'd strings */
     if (srt_list) free(srt_list);
     if (lang_list) free(lang_list);
@@ -893,9 +988,13 @@ int main(int argc,char**argv){
     if (cli_outlinecolor && strcmp(cli_outlinecolor, "#000000") != 0) free((void*)cli_outlinecolor);
     if (cli_shadowcolor && strcmp(cli_shadowcolor, "#64000000") != 0) free((void*)cli_shadowcolor);
 
+    /* Close output IO if opened, free contexts and network resources to
+     * allow libav to release internal allocations detected by ASan. */
+    if (out_fmt && out_fmt->pb) avio_closep(&out_fmt->pb);
     avformat_free_context(out_fmt);
     avformat_close_input(&in_fmt);
-    fclose(qc);
+    avformat_network_deinit();
+    if (qc) fclose(qc);
     av_packet_free(&pkt);
 
 #if 1

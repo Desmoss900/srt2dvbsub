@@ -14,13 +14,18 @@ extern int debug_level;
 
 static void log_qc(FILE *qc, const char *level, const char *color,
                    const char *filename, int cue_idx, const char *msg) {
-    // Write to qc_log.txt (no colors)
-    fprintf(qc, "%s: cue %d %s: %s\n", filename, cue_idx, level, msg);
-
-    // Also to stderr with colors (if debug enabled)
-    if (debug_level > 0) {
-        fprintf(stderr, "%s%s: cue %d %s: %s%s\n",
-                color, filename, cue_idx, level, msg, COL_RST);
+    // Write plain line to qc file when present, otherwise to stderr
+    if (qc) {
+        fprintf(qc, "%s: cue %d %s: %s\n", filename, cue_idx, level, msg);
+        // Also to stderr with colors (if debug enabled)
+        if (debug_level > 0) {
+            fprintf(stderr, "%s%s: cue %d %s: %s%s\n",
+                    color, filename, cue_idx, level, msg, COL_RST);
+        }
+    } else {
+        // When QC file is not enabled, emit the plain QC line to stderr so
+        // callers see the same messages on stderr.
+        fprintf(stderr, "%s: cue %d %s: %s\n", filename, cue_idx, level, msg);
     }
 }
 

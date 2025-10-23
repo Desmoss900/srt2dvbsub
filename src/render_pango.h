@@ -26,4 +26,8 @@ void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a
 /* Cleanup resources allocated by render_pango (call before FcFini()) */
 void render_pango_cleanup(void);
 
+/* Runtime knobs */
+void render_pango_set_ssaa_override(int ssaa);
+void render_pango_set_no_unsharp(int no_unsharp);
+
 #endif

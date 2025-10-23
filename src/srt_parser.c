@@ -282,12 +282,22 @@ static char* normalize_tags(const char *in) {
 int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc) {
      extern int debug_level;
     FILE *f = fopen(filename, "r");
-    if (!f) return -1;
+    if (!f) {
+        if (debug_level > 0) {
+            fprintf(stderr, "[srt_parser] Failed to open SRT '%s': %s\n", filename, strerror(errno));
+        }
+        return -1;
+    }
 
     char line[2048];
     int cap = 128, n = 0;
     *entries_out = calloc(cap, sizeof(SRTEntry));
-    if (!*entries_out) { fclose(f); return -1; }
+    if (!*entries_out) {
+        if (debug_level > 0) {
+            fprintf(stderr, "[srt_parser] Failed to allocate entries array for '%s'\n", filename);
+        }
+        fclose(f); return -1;
+    }
 
     while (fgets(line, sizeof(line), f)) {
         rstrip(line);
