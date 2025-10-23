@@ -1,3 +1,49 @@
+/*  
+* Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+* All rights reserved.
+*
+* This software is licensed under the "Personal Use License" described below.
+*
+* ────────────────────────────────────────────────────────────────
+* PERSONAL USE LICENSE
+* ────────────────────────────────────────────────────────────────
+* Permission is hereby granted, free of charge, to any individual person
+* using this software for personal, educational, or non-commercial purposes,
+* to use, copy, modify, merge, publish, and/or build upon this software,
+* provided that this copyright and license notice appears in all copies
+* or substantial portions of the Software.
+*
+* ────────────────────────────────────────────────────────────────
+* COMMERCIAL USE
+* ────────────────────────────────────────────────────────────────
+* Commercial use of this software, including but not limited to:
+*   • Incorporation into a product or service sold for profit,
+*   • Use within an organization or enterprise in a revenue-generating activity,
+*   • Modification, redistribution, or hosting as part of a commercial offering,
+* requires a separate **Commercial License** from the copyright holder.
+*
+* To obtain a commercial license, please contact:
+*   [Mark E. Rosche | Chili-IPTV Systems]
+*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*
+* ────────────────────────────────────────────────────────────────
+* DISCLAIMER
+* ────────────────────────────────────────────────────────────────
+* THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+* OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+* DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*
+* ────────────────────────────────────────────────────────────────
+* Summary:
+*   ✓ Free for personal, educational, and hobbyist use.
+*   ✗ Commercial use requires a paid license.
+* ────────────────────────────────────────────────────────────────
+*/
+
 #define _POSIX_C_SOURCE 200809L
 #include "render_pango.h"
 #include "palette.h"
@@ -257,10 +303,12 @@ Bitmap render_text_pango(const char *markup,
     } else {
         int f = 18;
         if (disp_h <= 576) {
-            /* SD band: interpolate 18..22 over 0..576 */
+            /* SD band: slightly smaller baseline to avoid vertical overflow.
+             * Interpolate 19..24 over 0..576 (a small reduction from previous)
+             * to make SD subtitles a bit less tall while keeping improved clarity. */
             double t = (double)disp_h / 576.0;
             if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
-            double v = 18.0 + t * (22.0 - 18.0);
+            double v = 19.0 + t * (24.0 - 19.0);
             f = (int)round(v);
         } else if (disp_h <= 1080) {
             /* HD band: interpolate 36..42 over 577..1080 so 1080 -> ~42 */
@@ -315,7 +363,7 @@ Bitmap render_text_pango(const char *markup,
     // with the ssaa_override runtime knob.
     int ss;
     if (disp_h <= 576) {
-        ss = 3; // SD: strong supersample to avoid crystalized edges
+        ss = 2; // SD: increase supersample to further reduce blockiness on low res
     } else if (disp_h <= 1080) {
         ss = 3; // HD: bump to 3x to improve edge fidelity compared to previous 2x
     } else if (disp_h <= 2160) {
@@ -387,7 +435,10 @@ Bitmap render_text_pango(const char *markup,
     /* Make stroke width proportional to fontsize, but scale it down slightly
      * for higher SSAA so strokes don't appear overly thick after downsampling. */
     double stroke_w = 0.9 + (fontsize * 0.045);
-    if (ss >= 4) stroke_w *= 0.70; /* thinner at 4x to compensate */
+    /* For very large displays we thin the stroke a bit when SSAA is high
+     * to avoid overly chunky outlines after downsampling. For SD we keep
+     * the stroke thicker to prevent small glyph features from being eaten. */
+    if (ss >= 4 && disp_h > 576) stroke_w *= 0.70; /* thinner at 4x for HD/UHD */
     cairo_set_line_width(cr, stroke_w);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     pango_cairo_layout_path(cr, layout_real);
@@ -875,10 +926,15 @@ Bitmap render_text_pango(const char *markup,
             if (a > 24 && a < 255) {
                 double an = (double)a / 255.0;
                 double bias = pow(an, 1.05) * 0.6; /* tuned base */
-                /* Reduce bias at higher SSAA: strong SSAA needs less artificial bias */
-                bias *= (3.0 / (double)ss);
+                /* Reduce bias at higher SSAA for HD/UHD: strong SSAA needs less artificial bias.
+                 * For SD (disp_h <= 576) keep bias stronger to avoid eaten-out strokes. */
+                if (disp_h > 576) bias *= (3.0 / (double)ss);
                 if (bias > 0.92) bias = 0.92;
-                if (bias < 0.05) bias = 0.05; /* keep a tiny bias for very soft edges */
+                if (disp_h <= 576) {
+                    if (bias < 0.12) bias = 0.12; /* stronger minimum bias on SD */
+                } else {
+                    if (bias < 0.05) bias = 0.05; /* keep a tiny bias for very soft edges on HD/UHD */
+                }
                 rd = rd * (1.0 - bias) + fg_disp_r * bias;
                 gd = gd * (1.0 - bias) + fg_disp_g * bias;
                 bd = bd * (1.0 - bias) + fg_disp_b * bias;

@@ -1,4 +1,4 @@
-bin_PROGRAMS = srt2dvbsub graphic_sub_mux
+bin_PROGRAMS = srt2dvbsub dvdbr2dvbsub
 
 srt2dvbsub_SOURCES = \
     src/srt2dvbsub.c \
@@ -10,7 +10,8 @@ srt2dvbsub_SOURCES = \
     src/dvb_sub.c \
     src/qc.c \
     src/bench.c \
-    src/debug_png.c
+    src/debug_png.c \
+    src/muxsub.c
 
 # Conditionally include libass-based renderer when configured with --enable-ass
 if USE_LIBASS
@@ -23,17 +24,18 @@ endif
 srt2dvbsub_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS)
 srt2dvbsub_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) $(LIBASS_LIBS) -lfontconfig -lm
 
-graphic_sub_mux_SOURCES = \
-    src/graphic_sub_mux.c \
+dvdbr2dvbsub_SOURCES = \
+    src/dvdbr2dvbsub.c \
     src/runtime_opts.c \
     src/cpu_count.c \
     src/dvb_sub.c \
     src/qc.c \
     src/bench.c \
-    src/debug_png.c
+    src/debug_png.c \
+    src/muxsub.c
 
-graphic_sub_mux_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS)
-graphic_sub_mux_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) -lm
+dvdbr2dvbsub_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS)
+dvdbr2dvbsub_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) -lm
 
 distclean-local:
 	rm -rf autom4te.cache

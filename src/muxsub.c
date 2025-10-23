@@ -43,56 +43,98 @@
 *   ✗ Commercial use requires a paid license.
 * ────────────────────────────────────────────────────────────────
 */
-#ifndef RENDER_ASS_H
-#define RENDER_ASS_H
-#pragma once
 
-#include <stdint.h>
-#include "dvb_sub.h"   // for Bitmap struct
+#define _POSIX_C_SOURCE 200809L
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include "subtrack.h"
+#include "bench.h"
 
-/* If libass is available (configure --enable-ass) include its headers.
- * Otherwise provide opaque typedefs so callers can compile and link against
- * a stub implementation (render_ass_stub.c) without requiring libass.
- */
-#ifdef HAVE_LIBASS
-#include <ass/ass.h>
-#else
-typedef struct ASS_Library ASS_Library;
-typedef struct ASS_Renderer ASS_Renderer;
-typedef struct ASS_Track ASS_Track;
-#endif
+/* srt2dvbsub.c defines the global debug_level; declare it here. */
+extern int debug_level;
 
-// Initialize the libass library + renderer
-ASS_Library* render_ass_init();
-ASS_Renderer* render_ass_renderer(ASS_Library *lib, int w, int h);
+void encode_and_write_subtitle(AVCodecContext *ctx,
+                                      AVFormatContext *out_fmt,
+                                      SubTrack *track,
+                                      AVSubtitle *sub,
+                                      int64_t pts90,
+                                      int bench_mode,
+                                      const char *dbg_png)
+{
+    if (!sub)
+    {
+        if (debug_level > 2)
+        {
+            fprintf(stderr, "Skipping empty/bad subtitle event\n");
+        }
+        return;
+    }
 
-// Create a new libass track
-ASS_Track* render_ass_new_track(ASS_Library *lib);
+#define SUB_BUF_SIZE 65536
+    uint8_t *tmpbuf = av_malloc(SUB_BUF_SIZE);
+    if (!tmpbuf)
+        return;
 
-// Feed a subtitle event (SRT/ASS text, timing) into the track
-void render_ass_add_event(ASS_Track *track,
-                          const char *text,
-                          int64_t start_ms,
-                          int64_t end_ms);
+    int64_t t_enc = bench_now();
+    int size = avcodec_encode_subtitle(ctx, tmpbuf, SUB_BUF_SIZE, sub);
+    if (debug_level > 0) fprintf(stderr, "[muxsub] avcodec_encode_subtitle returned %d\n", size);
+    if (bench_mode)
+        bench.t_encode_us += bench_now() - t_enc;
 
-// Render the frame at a given time (ms) into a Bitmap
-Bitmap render_ass_frame(ASS_Renderer *renderer,
-                        ASS_Track *track,
-                        int64_t now_ms,
-                        const char *palette_mode);
+    if (size > 0)
+    {
+        AVPacket *pkt = av_packet_alloc();
+        if (!pkt)
+        {
+            av_free(tmpbuf);
+            return;
+        }
+        if (av_new_packet(pkt, size) < 0)
+        {
+            av_free(tmpbuf);
+            av_packet_free(&pkt);
+            return;
+        }
+        memcpy(pkt->data, tmpbuf, size);
+        av_free(tmpbuf);
 
-// Cleanup
-void render_ass_done(ASS_Library *lib, ASS_Renderer *renderer);
+        pkt->stream_index = track->stream->index;
 
-void render_ass_set_style(ASS_Track *track,
-                          const char *font, int size,
-                          const char *fg, const char *outline, const char *shadow);
+        // Per-track last_pts to ensure monotonicity per subtitle track
+        if (track->last_pts != AV_NOPTS_VALUE && pts90 <= track->last_pts)
+        {
+            pts90 = track->last_pts + 90; // bump 1ms forward to avoid non-monotonic DTS
+        }
+        pkt->pts = pts90;
+        pkt->dts = pts90;
+        track->last_pts = pts90;
 
-void render_ass_debug_styles(ASS_Track *track);                          
-
-// Convenience/free wrappers matching older name expectations
-void render_ass_free_track(ASS_Track *track);
-void render_ass_free_renderer(ASS_Renderer *renderer);
-void render_ass_free_lib(ASS_Library *lib);
-
-#endif
+        int64_t t0 = bench_now();
+        int ret = av_interleaved_write_frame(out_fmt, pkt);
+        if (debug_level > 0)
+        {
+            if (ret < 0)
+            {
+                char errbuf[128];
+                av_strerror(ret, errbuf, sizeof(errbuf));
+                fprintf(stderr, "[dvb] av_interleaved_write_frame returned %d (%s)\n", ret, errbuf);
+            }
+            else
+            {
+                if (dbg_png)
+                    fprintf(stderr, "[dvb] encoded from PNG: %s\n", dbg_png);
+            }
+        }
+        if (bench_mode)
+        {
+            bench.t_mux_us += bench_now() - t0;
+            bench.cues_encoded++;
+            bench.packets_muxed++;
+        }
+        av_packet_free(&pkt);
+    }
+    else
+    {
+        av_free(tmpbuf);
+    }
+}

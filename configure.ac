@@ -1,4 +1,4 @@
-AC_INIT([srt2dvbmux], [1.0], [bugs@example.com])
+AC_INIT([srt2dvbsub], [1.0], [bugs@example.com])
 
 # Default to disabling Automake dependency-tracking unless explicitly enabled.
 # This makes the common developer/workflow faster (no per-file dep-tracking)

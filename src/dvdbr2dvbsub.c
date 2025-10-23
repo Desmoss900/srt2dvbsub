@@ -1,5 +1,50 @@
-#define _POSIX_C_SOURCE 200809L
+/*  
+* Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+* All rights reserved.
+*
+* This software is licensed under the "Personal Use License" described below.
+*
+* ────────────────────────────────────────────────────────────────
+* PERSONAL USE LICENSE
+* ────────────────────────────────────────────────────────────────
+* Permission is hereby granted, free of charge, to any individual person
+* using this software for personal, educational, or non-commercial purposes,
+* to use, copy, modify, merge, publish, and/or build upon this software,
+* provided that this copyright and license notice appears in all copies
+* or substantial portions of the Software.
+*
+* ────────────────────────────────────────────────────────────────
+* COMMERCIAL USE
+* ────────────────────────────────────────────────────────────────
+* Commercial use of this software, including but not limited to:
+*   • Incorporation into a product or service sold for profit,
+*   • Use within an organization or enterprise in a revenue-generating activity,
+*   • Modification, redistribution, or hosting as part of a commercial offering,
+* requires a separate **Commercial License** from the copyright holder.
+*
+* To obtain a commercial license, please contact:
+*   [Mark E. Rosche | Chili-IPTV Systems]
+*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*
+* ────────────────────────────────────────────────────────────────
+* DISCLAIMER
+* ────────────────────────────────────────────────────────────────
+* THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+* OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+* DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*
+* ────────────────────────────────────────────────────────────────
+* Summary:
+*   ✓ Free for personal, educational, and hobbyist use.
+*   ✗ Commercial use requires a paid license.
+* ────────────────────────────────────────────────────────────────
+*/
 
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -267,7 +312,7 @@ int main(int argc, char **argv) {
     case 1013: src_fps = atof(optarg); break;
     case 1014: dst_fps = atof(optarg); break;
         default:
-            fprintf(stderr, "Usage: graphic_sub_mux --input in --output out --languages eng[,deu] [--forced] [--hi] [--debug N]\n");
+            fprintf(stderr, "Usage: dvdbr2dvbsub --input in --output out --languages eng[,deu] [--forced] [--hi] [--debug N]\n");
             return 1;
         }
     }
@@ -519,13 +564,18 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: could not write header for output file\n");
         return -1;
     }
-    // Add a blank subtitle at PTS 1 to set start_time and clear screen
-    for (int t = 0; t < ntracks; t++) {
-        AVSubtitle blank_sub = {0};
-        blank_sub.pts = 1;  // PTS in AV_TIME_BASE units (1 us)
-        blank_sub.end_display_time = 2;  // 1ms display
-    encode_and_write_subtitle(tracks[t].codec_ctx, out_fmt, &tracks[t], &blank_sub, 1, bench_mode, NULL);
-        avsubtitle_free(&blank_sub);
+    /* If there is no video stream, emit a tiny blank subtitle at PTS=1 so
+     * the output stream start_time is initialized. If there is a video
+     * stream we wait until we see the first video PTS and then emit the
+     * blank at (first_video_pts90 + 1) inside the demux loop below. */
+    if (video_index < 0) {
+        for (int t = 0; t < ntracks; t++) {
+            AVSubtitle blank_sub = {0};
+            blank_sub.pts = 1;  /* AVSubtitle.pts is in AV_TIME_BASE units */
+            blank_sub.end_display_time = 2; /* 1ms display */
+            encode_and_write_subtitle(tracks[t].codec_ctx, out_fmt, &tracks[t], &blank_sub, 1, bench_mode, NULL);
+            avsubtitle_free(&blank_sub);
+        }
     }
     if (debug_level > 0) {
         if (dst_fps > 0.0) fprintf(stderr, "Subtitle PTS will be scaled: src_fps=%f dst_fps=%f scale=%f\n", src_fps, dst_fps, (src_fps>0.0? src_fps/dst_fps: 0.0));
@@ -543,7 +593,7 @@ int main(int argc, char **argv) {
     AVSubtitle sub;
     while (av_read_frame(in_fmt, pkt) >= 0) {
         if (stop_requested) {
-            if (debug_level > 0) fprintf(stderr, "[graphic_sub_mux] stop requested (signal), breaking demux loop\n");
+            if (debug_level > 0) fprintf(stderr, "[dvdbr2dvbsub] stop requested (signal), breaking demux loop\n");
             av_packet_unref(pkt);
             break;
         }
@@ -581,6 +631,17 @@ int main(int argc, char **argv) {
                 first_video_pts90 = av_rescale_q(pkt->pts, in_fmt->streams[video_index]->time_base, (AVRational){1,90000});
                 seen_first_video = 1;
                 if (debug_level > 0) fprintf(stderr, "first_video_pts90=%lld\n", (long long)first_video_pts90);
+
+                /* Emit a tiny blank subtitle event at first_video_pts90 + 1
+                 * so the output subtitle stream start_time aligns with the
+                 * first video PTS and the display is cleared at stream start. */
+                for (int t = 0; t < ntracks; t++) {
+                    AVSubtitle blank_sub = {0};
+                    blank_sub.pts = 1; /* AVSubtitle.pts is not used by encoder here */
+                    blank_sub.end_display_time = 2;
+                    encode_and_write_subtitle(tracks[t].codec_ctx, out_fmt, &tracks[t], &blank_sub, first_video_pts90 + 1, bench_mode, NULL);
+                    avsubtitle_free(&blank_sub);
+                }
             }
         }
 
