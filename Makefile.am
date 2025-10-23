@@ -1,7 +1,7 @@
-bin_PROGRAMS = srt2dvbmux graphic_sub_mux
+bin_PROGRAMS = srt2dvbsub graphic_sub_mux
 
-srt2dvbmux_SOURCES = \
-    src/main.c \
+srt2dvbsub_SOURCES = \
+    src/srt2dvbsub.c \
     src/srt_parser.c \
     src/render_pango.c \
     src/render_pool.c \
@@ -14,14 +14,14 @@ srt2dvbmux_SOURCES = \
 
 # Conditionally include libass-based renderer when configured with --enable-ass
 if USE_LIBASS
-srt2dvbmux_SOURCES += src/render_ass.c
+srt2dvbsub_SOURCES += src/render_ass.c
 else
 # Provide a tiny stub implementation so code links when libass is not available
-srt2dvbmux_SOURCES += src/render_ass_stub.c
+srt2dvbsub_SOURCES += src/render_ass_stub.c
 endif
 
-srt2dvbmux_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS)
-srt2dvbmux_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) $(LIBASS_LIBS) -lfontconfig -lm
+srt2dvbsub_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS)
+srt2dvbsub_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) $(LIBASS_LIBS) -lfontconfig -lm
 
 graphic_sub_mux_SOURCES = \
     src/graphic_sub_mux.c \
