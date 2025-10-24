@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -48,10 +49,35 @@
 #include "cpu_count.h"
 #include <unistd.h>
 
+/*
+ * get_cpu_count
+ * -------------
+ * Return the number of online logical processors available to the OS.
+ *
+ * The function is intentionally conservative: it prefers platform APIs
+ * that report currently-online CPUs (e.g., sysconf(_SC_NPROCESSORS_ONLN)
+ * on POSIX). If querying is unavailable or fails the function returns
+ * 1 as a safe fallback. Callers should treat this value as a hint and
+ * allow configuration overrides.
+ */
 int get_cpu_count(void) {
+    /*
+     * POSIX path: attempt to read the number of online processors via
+     * sysconf(_SC_NPROCESSORS_ONLN). This value reflects CPUs the OS
+     * currently considers online (excludes hotplugged-offline CPUs).
+     */
 #ifdef _SC_NPROCESSORS_ONLN
     long n = sysconf(_SC_NPROCESSORS_ONLN);
-    if (n > 0) return (int)n;
+    if (n > 0) {
+        /* Successful query: return the result as an int. */
+        return (int)n;
+    }
 #endif
+
+    /*
+     * Fallback: if we couldn't query the platform, return 1 so callers
+     * have a sensible default. This keeps behavior predictable on
+     * unusual or constrained platforms.
+     */
     return 1;
 }

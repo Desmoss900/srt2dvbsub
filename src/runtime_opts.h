@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -47,10 +48,34 @@
 #ifndef SRT2DVB_RUNTIME_OPTS_H
 #define SRT2DVB_RUNTIME_OPTS_H
 
-/* runtime-configurable options (defined in main.c) */
+/**
+ * @file runtime_opts.h
+ * @brief Global runtime-configurable options used by the application.
+ *
+ * These globals are populated (with defaults) in `runtime_opts.c` and may be
+ * overridden by command-line parsing in `main.c`. They are intentionally
+ * simple globals to keep option access convenient across the codebase.
+ *
+ * Thread-safety: the variables are read-mostly after initialization. Any
+ * runtime mutation must be synchronized by the caller.
+ */
+
+/** Number of encoder threads to use. 0 = encoder default. */
 extern int enc_threads;
+
+/** Number of render worker threads used by the renderer pool. */
 extern int render_threads;
+
+/**
+ * Supersampling factor applied during text rendering (Pango/Cairo).
+ * 1 disables supersampling. Larger values increase quality and CPU/memory.
+ */
 extern int ssaa_override;
+
+/**
+ * If non-zero, skip the final unsharp/unsharp-mask pass. Useful for
+ * performance testing or when the unsharp kernel produces artifacts.
+ */
 extern int no_unsharp;
 
 #endif /* SRT2DVB_RUNTIME_OPTS_H */

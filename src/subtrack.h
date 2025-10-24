@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -53,23 +54,43 @@
 #include "srt_parser.h"
 #include "render_ass.h"
 
-/* single detailed language table and validator above */
+/*
+ * @file subtrack.h
+ * @brief Per-subtitle-track state and ownership semantics.
+ *
+ * The SubTrack structure holds everything required to emit a single
+ * subtitle language track: the parsed cues, encoder context, and optional
+ * libass track when ASS rendering is enabled. The struct intentionally
+ * stores raw pointers to keep the implementation straightforward; callers
+ * must follow the documented ownership rules below.
+ */
 
+/*
+ * Per-track state used while emitting DVB/MP4 subtitle streams.
+ *
+ * Ownership notes:
+ *  - `entries` is a malloc'd array returned by the SRT parser; the
+ *    SubTrack owner is responsible for freeing each entry->text and the
+ *    array itself when the track is torn down.
+ *  - `stream` and `codec_ctx` are owned by the muxer/encoder subsystem
+ *    and should not be free()'d by callers of SubTrack unless explicitly
+ *    transferred.
+ */
 typedef struct SubTrack {
-    SRTEntry *entries;
-    int count;
-    int cur_sub;
-    AVStream *stream;
-    AVCodecContext *codec_ctx; // per-track encoder
+    SRTEntry *entries;      /**< Parsed cue array (caller frees entries[i].text and array) */
+    int count;              /**< Number of parsed cues in `entries` */
+    int cur_sub;            /**< Index of the currently active/next cue */
+    AVStream *stream;       /**< AVStream used for this subtitle track (muxer-owned) */
+    AVCodecContext *codec_ctx; /**< Per-track encoder context (muxer-owned) */
 #ifdef HAVE_LIBASS
-    ASS_Track *ass_track;      // libass track if --ass enabled
+    ASS_Track *ass_track;   /**< Optional libass track if ASS rendering enabled */
 #endif
-    const char *lang;
-    const char *filename;
-    int forced;
-    int hi;
-    int64_t last_pts;       // last emitted pts for this track (for monotonicity)
-    int effective_delay_ms; // per-track (audio-matched) delay + CLI fine-tune
+    const char *lang;       /**< ISO language tag (not owned) */
+    const char *filename;   /**< Source filename for this track (not owned) */
+    int forced;             /**< Non-zero if the track is marked as 'forced' */
+    int hi;                 /**< High-priority flag (internal use) */
+    int64_t last_pts;       /**< Last emitted PTS for this track (for monotonicity) */
+    int effective_delay_ms; /**< Per-track delay applied to cue timing in ms */
 } SubTrack;
 
-#endif /* SUBTRACK_H */
+#endif 

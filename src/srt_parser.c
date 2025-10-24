@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -54,16 +55,41 @@
 #include <ctype.h>
 
 #define MAX_TAG_STACK 32
-// --- Configurable limits ---
+/* --- Configurable limits --- */
 #define MAX_LINES_SD 3
 #define MAX_CHARS_SD 37
 #define MAX_CHARS_HD 67
 
+/* Imported from main.c -- these are used to decide SD/HD wrapping rules */
 extern int use_ass;
 extern int video_w;
 extern int video_h;
 
-// Count Unicode codepoints (visible characters) in a UTF-8 string
+/*
+ * srt_parser.c
+ * --------------
+ * Implements a minimal, robust SRT file parser tailored for the project's
+ * subtitle normalization requirements. Key behaviors:
+ *  - Strips an optional UTF-8 BOM on the first line (prevents sscanf failures)
+ *  - Parses numeric cue indices and timestamp lines (HH:MM:SS,ms --> HH:MM:SS,ms)
+ *  - Joins and normalizes cue text (whitespace, line wrapping) using
+ *    SD/HD heuristics to avoid overly long lines on small displays.
+ *  - Optionally preserves ASS markup (when `use_ass` is set) or converts
+ *    simple HTML tags into ASS overrides.
+ *
+ * The parser favors simplicity and predictable outputs rather than full
+ * compliance with every SRT/ASS edge case. Caller responsibility:
+ *  - Free the returned `entries_out` array and each entry's `text` member.
+ */
+
+
+/*
+ * Count Unicode codepoints (visible characters) in a UTF-8 string.
+ *
+ * This counts codepoints rather than bytes so length checks and wrapping
+ * operate on human-visible characters. The function tolerates invalid
+ * UTF-8 by treating invalid bytes as single-width characters.
+ */
 static int u8_len(const char *s) {
     int count = 0;
     unsigned char c;
@@ -78,12 +104,20 @@ static int u8_len(const char *s) {
     return count;
 }
 
-// Join lines, enforce max chars per line, max lines
+
+/*
+ * Normalize cue text: collapse whitespace, join lines and wrap to
+ * `max_chars` per line using `max_lines`. The function returns a newly
+ * allocated string which the caller must free.
+ *
+ * The routine uses UTF-8 codepoint counting via u8_len so wrapping is
+ * character-aware for non-ASCII languages.
+ */
 static char* normalize_cue_text(const char *raw, int is_hd) {
     int max_lines = MAX_LINES_SD;
     int max_chars = is_hd ? MAX_CHARS_HD : MAX_CHARS_SD;
 
-    // Step 1: normalize whitespace and join lines
+    /* Step 1: normalize whitespace and join lines */
     char buf[8192]; buf[0] = 0;
     const char *p = raw;
     int last_space = 0;
@@ -123,7 +157,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     while (tok) {
         int wordlen = u8_len(tok);
 
-        // Only treat as standalone if cue is symbol-only
+    /* Only treat as standalone if cue is symbol-only */
         int sym_line = (whole_cue_is_symbol && wordlen == 1);
 
         if (sym_line) {
@@ -154,6 +188,9 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     return out;
 }
 
+/*
+ * Trim trailing CR/LF characters from a C string in-place.
+ */
 static void rstrip(char *s) {
     int n = strlen(s);
     while (n>0 && (s[n-1]=='\n' || s[n-1]=='\r')) {
@@ -161,7 +198,11 @@ static void rstrip(char *s) {
     }
 }
 
-// Convert SSA/ASS color string (&HBBGGRR&) → "#RRGGBB"
+
+/*
+ * Parse an ASS color override tag like "{\c&HBBGGRR&}" or "{\1c&H...&}"
+ * and produce a Pango/CSS '#RRGGBB' color string in `out`.
+ */
 static void parse_ass_color(const char *tag, char *out, size_t outsz) {
     unsigned int b=0,g=0,r=0;
     if (sscanf(tag, "{\\c&H%02X%02X%02X&}", &b,&g,&r) == 3 ||
@@ -173,13 +214,19 @@ static void parse_ass_color(const char *tag, char *out, size_t outsz) {
     }
 }
 
+/*
+ * Safe string append used by tag normalization helpers. Ensures we do not
+ * overflow the provided capacity.
+ */
 static void safe_append(char *out, size_t cap, const char *s) {
     if (strlen(out) + strlen(s) + 1 < cap) {
         strcat(out, s);
     }
 }
 
-// Replace ASS non-breaking spaces (\h) with normal spaces
+/*
+* Replace ASS non-breaking space escape ("\h") with a normal space. 
+*/
 static void replace_ass_h(char *text) {
     if (!text) return;
     char *p = text;
@@ -190,7 +237,10 @@ static void replace_ass_h(char *text) {
     }
 }
 
-// Remove ASS non-breaking spaces (\h) completely
+
+/*
+* Remove ASS non-breaking space escape sequences completely. 
+*/
 static void remove_ass_h(char *text) {
     if (!text) return;
     char *p = text;
@@ -201,6 +251,12 @@ static void remove_ass_h(char *text) {
 
 
 // Replace SSA/ASS tags with Pango equivalents
+/**
+ * Translate a subset of ASS override tags to Pango markup. The returned
+ * string is newly allocated and must be freed by the caller. This is a
+ * lightweight translator intended for basic styling (bold/italic/underline,
+ * color, font face). Complex ASS features like transforms are ignored.
+ */
 static char* normalize_tags(const char *in) {
     size_t cap = strlen(in)*6 + 256;
     char *tmp = malloc(cap);
@@ -319,12 +375,21 @@ static char* normalize_tags(const char *in) {
         safe_append(tmp, cap, stack[j]);
     }
 
-    // Sanitize raw text after tag normalization
-    // char *san = sanitize_markup(tmp);
-    // free(tmp);
+    /* Sanitize raw text after tag normalization */
+    /* char *san = sanitize_markup(tmp); */
+    /* free(tmp); */
     return tmp;
 }
 
+/*
+ * Parse an SRT file into an array of SRTEntry structures.
+ *
+ * The function opens `filename`, reads cues, normalizes text and performs
+ * lightweight QC checks which are written to `qc` when provided.
+ *
+ * Return: number of parsed cues on success, -1 on error (file open or
+ * allocation failure). Caller frees the allocated entries and their text.
+ */
 int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc) {
      extern int debug_level;
     FILE *f = fopen(filename, "r");
@@ -387,7 +452,7 @@ int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc) {
             *entries_out = realloc(*entries_out, cap * sizeof(SRTEntry));
         }
 
-        // Decide SD vs HD by actual input resolution from main.c
+    /* Decide SD vs HD by actual input resolution from main.c */
         int is_hd = (video_w > 720 || video_h > 576);
 
         char *norm = NULL;
@@ -406,11 +471,11 @@ int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc) {
         (*entries_out)[n].end_ms   = end;
         (*entries_out)[n].text     = norm;
 
-        // Force at least 50ms gap between adjacent cues
+        /* Force at least 50ms gap between adjacent cues */
         if (n > 0 && (*entries_out)[n].start_ms <= (*entries_out)[n-1].end_ms) {
             (*entries_out)[n-1].end_ms = (*entries_out)[n].start_ms - 50;
             if ((*entries_out)[n-1].end_ms < (*entries_out)[n-1].start_ms) {
-                // never allow negative duration
+                /* never allow negative duration */
                 (*entries_out)[n-1].end_ms = (*entries_out)[n-1].start_ms + 1;
             }
             (*entries_out)[n].start_ms = (*entries_out)[n-1].end_ms + 50;
@@ -442,7 +507,7 @@ int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc) {
         }
         (*entries_out)[n].alignment = align;
 
-        // Use stripped text (no HTML/ASS tags) for QC length checks
+    /* Use stripped text (no HTML/ASS tags) for QC length checks */
         char *plain = strip_tags((*entries_out)[n].text);
         SRTEntry tmp = (*entries_out)[n];
         tmp.text = plain;
@@ -469,7 +534,10 @@ int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc) {
     return n;
 }
 
-// Convert minimal HTML tags (<i>, <b>, <font color>) into ASS overrides
+/* 
+ * Convert minimal HTML tags (<i>, <b>, <font color>) into ASS overrides.
+ * The caller frees the returned string. 
+ */
 char* srt_html_to_ass(const char *in) {
     size_t cap = strlen(in) * 8 + 128;
     char *out = malloc(cap);
@@ -511,7 +579,10 @@ char* srt_html_to_ass(const char *in) {
     return out;
 }
 
-// Helper: strip ASS/HTML tags for clean length calculations
+/*
+ * Strip ASS/HTML tags for plain-text length/QC calculations. Returns a
+ * newly allocated C string which the caller must free.
+ */
 char* strip_tags(const char *in) {
     char *out = malloc(strlen(in) + 1);
     int j = 0;

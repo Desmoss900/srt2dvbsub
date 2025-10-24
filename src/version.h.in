@@ -46,55 +46,6 @@
 */
 
 #pragma once
-#include <stdint.h>
-
-/**
- * @file palette.h
- * @brief Palette utilities for subtitle rendering (ARGB32 palettes).
- *
- * The rendering pipeline uses 32-bit ARGB palette entries (0xAARRGGBB) when
- * converting RGBA render targets into constrained broadcast palettes. This
- * header exposes helpers to initialize common palettes and to find the
- * nearest palette index for an arbitrary ARGB color.
- *
- * Palettes are arrays of `uint32_t` entries in host endianness. Many DVB
- * modes require at least 16 entries; callers should allocate sufficient
- * space for the intended mode.
- *
- * Example:
- * @code
- *   uint32_t pal[16];
- *   init_palette(pal, "broadcast");
- *   int idx = nearest_palette_index(pal, 16, 0xFF112233);
- * @endcode
- */
-
-/**
- * Initialize a predefined palette into `pal`.
- *
- * @param pal  Writable pointer to an array of 32-bit ARGB entries. Must be
- *             large enough for the chosen palette (minimum 16 entries).
- * @param mode Case-insensitive palette mode string (e.g. "broadcast",
- *             "greyscale", "ebu-broadcast"). If NULL or unrecognized,
- *             a sensible default palette is chosen.
- *
- * Notes:
- *  - This function does not return an error code. Callers must allocate
- *    sufficient storage for the expected palette size.
- */
-void init_palette(uint32_t *pal, const char *mode);
-
-/**
- * Find the nearest palette index for an ARGB color.
- *
- * @param palette Pointer to `npal` ARGB palette entries.
- * @param npal    Number of entries in `palette`. Must be > 0.
- * @param argb    Input color in 0xAARRGGBB format.
- * @return Index in range [0, npal-1] of the nearest palette entry, or -1
- *         when `npal` <= 0.
- *
- * The distance metric accounts for renderer expectations (premultiplied or
- * linear RGB) and handles alpha correctly; callers may pass a non-premultiplied
- * color and the implementation will perform the appropriate comparison.
- */
-int nearest_palette_index(uint32_t *palette, int npal, uint32_t argb);
+#define GIT_VERSION "@GIT_VERSION@"
+#define GIT_COMMIT  "@GIT_COMMIT@"
+#define GIT_DATE    "@GIT_DATE@"

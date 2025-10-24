@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -50,9 +51,43 @@
 #include "srt_parser.h"
 #include <stdio.h>
 
-// Run QC checks on a single entry and optionally compare with previous.
+/**
+ * @file qc.h
+ * @brief Quality control checks for SRT entries.
+ *
+ * Provide a compact set of heuristics and checks to detect common issues in
+ * SRT files (overlaps, bad durations, overly long lines, control characters,
+ * etc.). Results are emitted as one-line QC messages either to the provided
+ * `qc` FILE* or to stderr when `qc` is NULL.
+ *
+ * Example:
+ * @code
+ *   FILE *qc = fopen("qc.log", "w");
+ *   qc_check_entry("subs.srt", idx, &cur, &prev, qc);
+ *   fclose(qc);
+ * @endcode
+ *
+ * @param filename Human-readable source filename used in log output.
+ * @param index    Zero-based cue index used in logs.
+ * @param entry    Pointer to the current SRTEntry to test (must be non-NULL).
+ * @param prev     Optional pointer to the previous SRTEntry to check for overlaps.
+ * @param qc       Optional FILE* to write machine-readable QC output. If NULL,
+ *                 QC messages are written to stderr.
+ */
 void qc_check_entry(const char *filename, int index,
                     const SRTEntry *entry, const SRTEntry *prev,
                     FILE *qc);
+
+/**
+ * Global counter of QC-level ERROR messages emitted by qc_check_entry().
+ * Call qc_reset_counts() to reset to zero before a batch run.
+ */
+extern int qc_error_count;
+
+/**
+ * Reset internal QC counters (errors). Useful when running batch QC-only
+ * passes so the caller can print an aggregate summary after processing.
+ */
+void qc_reset_counts(void);
 
 #endif

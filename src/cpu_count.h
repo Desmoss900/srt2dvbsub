@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -43,11 +44,29 @@
 *   ✗ Commercial use requires a paid license.
 * ────────────────────────────────────────────────────────────────
 */
-
+#pragma once
 #ifndef SRT2DVB_CPU_COUNT_H
 #define SRT2DVB_CPU_COUNT_H
 
-/* Return number of available CPUs (>=1). Uses POSIX sysconf fallback. */
+/**
+ * @file cpu_count.h
+ * @brief Portable helper to query available logical CPU count
+ *
+ * Provide a small helper used by the application to determine a sensible
+ * default for thread pools and worker counts. The function returns a
+ * conservative estimate (number of online processors) and falls back to
+ * 1 when querying is not supported.
+ *
+ * Contract:
+ *  - Returns an integer >= 1 representing the number of online CPUs.
+ *  - On platforms where querying the CPU count fails, returns 1.
+ *
+ * Example usage:
+ * @code
+ *   int n = get_cpu_count();
+ *   int threads = max(1, n - 1); // keep one core free
+ * @endcode
+ */
 int get_cpu_count(void);
 
 #endif

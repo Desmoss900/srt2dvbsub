@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -50,13 +51,51 @@
 
 #include <stdint.h>
 
+/**
+ * @file render_pango.h
+ * @brief Pango/Cairo-based subtitle rendering helpers.
+ *
+ * This header declares a small renderer that converts Pango markup into an
+ * indexed Bitmap (palette + index buffer) suitable for DVB subtitle
+ * packaging. The implementation uses a thread-local PangoFontMap and
+ * performs adaptive supersampled rendering, small linear-light blurs,
+ * error-diffusion dithering, and cleanup passes to produce compact
+ * 16-color indexed output.
+ *
+ * Ownership: callers receive an allocated `Bitmap` and must free
+ * `idxbuf` and `palette` when finished.
+ */
+
+/**
+ * Bitmap
+ * ------
+ * Internal indexed bitmap returned by the rendering pipeline. Consumers
+ * receive `idxbuf` (width*height bytes, one palette index per pixel) and
+ * `palette` (array of 32-bit ARGB entries). The caller is responsible for
+ * freeing both `idxbuf` and `palette` when finished.
+ */
 typedef struct {
-    uint8_t *idxbuf;
-    uint32_t *palette;
-    int w,h,x,y;
-    int nb_colors;
+    uint8_t *idxbuf;    /**< One-byte-per-pixel palette indices (row-major) */
+    uint32_t *palette;  /**< Array of 32-bit ARGB palette entries (host endianness) */
+    int w,h,x,y;        /**< Width/height and top-left position in video coords */
+    int nb_colors;      /**< Number of valid colors in `palette` (typically 16) */
 } Bitmap;
 
+/**
+ * Render Pango markup text into an indexed Bitmap.
+ *
+ * @param markup        Pango markup string (may be produced by srt_to_pango_markup()).
+ * @param disp_w        Display width in pixels.
+ * @param disp_h        Display height in pixels.
+ * @param fontsize      If >0, force font size; otherwise an adaptive size is chosen.
+ * @param fontfam       Font family to use (NULL -> default).
+ * @param fgcolor       Foreground color string in "#RRGGBB" or "#AARRGGBB" form.
+ * @param outlinecolor  Outline/stroke color string.
+ * @param shadowcolor   Shadow color string.
+ * @param align_code    Alignment code (1..9 similar to ASS alignment).
+ * @param palette_mode  Palette hint forwarded to init_palette() (e.g., "broadcast").
+ * @return Bitmap with allocated idxbuf and palette on success. Caller must free both.
+ */
 Bitmap render_text_pango(const char *markup,
                           int disp_w, int disp_h,
                           int fontsize, const char *fontfam,
@@ -66,15 +105,48 @@ Bitmap render_text_pango(const char *markup,
                           int align_code,
                           const char *palette_mode);
 
+/**
+ * Convert SRT cue text to Pango markup.
+ *
+ * This converts a small subset of inline SRT/HTML tags (e.g. <b>, <i>,
+ * <u>, and <font color="#RRGGBB">) into Pango-compatible markup and
+ * escapes XML entities. Returns a newly-allocated NUL-terminated string
+ * which the caller must free with free().
+ *
+ * @param srt_text   Input SRT cue text (UTF-8).
+ * @return Allocated Pango markup string, or an empty string on allocation failure.
+ */
 char* srt_to_pango_markup(const char *srt_text);
 
+/**
+ * Parse a hex color string (#RRGGBB or #AARRGGBB) to normalized RGBA.
+ *
+ * Missing or malformed input defaults to opaque white (1.0,1.0,1.0,1.0).
+ *
+ * @param hex  Color string to parse (may be NULL).
+ * @param r,g,b,a  Output pointers receiving components in [0,1].
+ */
 void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a);
 
-/* Cleanup resources allocated by render_pango (call before FcFini()) */
+/**
+ * Cleanup per-thread resources allocated by the Pango renderer.
+ *
+ * Call this from the main thread (or the thread that owns fontconfig
+ * finalization) before calling FcFini() to deterministically release
+ * Pango/Cairo objects associated with this thread.
+ */
 void render_pango_cleanup(void);
 
-/* Runtime knobs */
+/**
+ * Force a specific supersample factor for rendering. When >0, supersampling
+ * is fixed to this value instead of being chosen adaptively.
+ */
 void render_pango_set_ssaa_override(int ssaa);
+
+/**
+ * Disable the unsharp sharpening pass when non-zero. Useful for testing
+ * or to avoid potential artifacts on some content.
+ */
 void render_pango_set_no_unsharp(int no_unsharp);
 
 #endif

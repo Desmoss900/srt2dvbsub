@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -50,8 +51,41 @@
 #include <libavcodec/avcodec.h>
 #include "render_pango.h"
 
-// Creates an AVSubtitle structure for DVB bitmap subtitles.
-
+/**
+ * @file dvb_sub.h
+ * @brief Convert internal Bitmaps into libav DVB subtitle structures.
+ *
+ * This helper translates the project's `Bitmap` representation into an
+ * `AVSubtitle` and associated `AVSubtitleRect` structures suitable for
+ * feeding to FFmpeg's DVB subtitle encoder. The translation copies the
+ * index-plane and palette into the `AVSubtitle` data planes and sets
+ * the display duration (end_display_time = end_ms - start_ms).
+ *
+ * Ownership / contract:
+ *  - The returned `AVSubtitle*` and any internal allocations are created
+ *    with libavutil allocators (e.g., av_malloc/av_mallocz). Callers must
+ *    free the result using `avsubtitle_free()` and then `av_free()` to
+ *    avoid leaks.
+ *  - If `bm.idxbuf` or `bm.palette` are missing or the bitmap dimensions
+ *    are invalid, the function returns an `AVSubtitle` with zero rects
+ *    (num_rects == 0) which encoders interpret as an explicit clear.
+ *
+ * Example:
+ * @code
+ *   Bitmap bm = render_subtitle(...);
+ *   AVSubtitle *sub = make_subtitle(bm, cue.start_ms, cue.end_ms);
+ *   if (sub) {
+ *       // send to encoder/muxer
+ *       avsubtitle_free(sub);
+ *       av_free(sub);
+ *   }
+ * @endcode
+ *
+ * @param bm Rendered Bitmap describing geometry, index buffer and palette.
+ * @param start_ms Cue start time in milliseconds.
+ * @param end_ms   Cue end time in milliseconds.
+ * @return Pointer to an allocated AVSubtitle on success, or NULL on failure.
+ */
 AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms);
 
 #endif

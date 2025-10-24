@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -56,28 +57,48 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <math.h>
-
 /* Use a thread-local PangoFontMap to avoid concurrent internal Pango
  * mutations when rendering from multiple worker threads. We create a
  * pthread key with a destructor that unrefs the fontmap on thread exit.
  */
 #include <pthread.h>
 
+/*
+ * Static variables for managing thread-specific Pango fontmap key.
+ * - pango_fontmap_key: Key used to store/retrieve thread-local fontmap data.
+ * - pango_fontmap_key_once: Ensures the key is initialized only once per process.
+ */
 static pthread_key_t pango_fontmap_key;
 static pthread_once_t pango_fontmap_key_once = PTHREAD_ONCE_INIT;
 
+/*
+ * pango_fontmap_destructor
+ * -----------------------
+ * Called by pthread when a thread with a stored PangoFontMap exits. We
+ * simply unref the GObject if present. Keep this minimal and robust as
+ * it runs during thread teardown.
+ */
 static void pango_fontmap_destructor(void *v) {
     if (!v) return;
     g_object_unref((GObject*)v);
 }
 
+/* Create the pthread key for storing a PangoFontMap per-thread. This is
+ * executed once via pthread_once to avoid races during key creation. */
 static void make_pango_fontmap_key(void) {
     pthread_key_create(&pango_fontmap_key, pango_fontmap_destructor);
 }
 
-/* Return a PangoFontMap for the calling thread, creating one if needed.
- * The map is stored in thread-specific storage and will be cleaned up
- * automatically when the thread exits. */
+
+/*
+ * get_thread_pango_fontmap
+ * ------------------------
+ * Obtain (or lazily create) a PangoFontMap tied to the calling thread.
+ * Using a thread-local fontmap avoids races and unnecessary global
+ * mutations inside Pango/fontconfig when rendering concurrently.
+ * The returned object is owned by thread-specific storage and should
+ * NOT be unreffed by callers.
+ */
 static PangoFontMap *get_thread_pango_fontmap(void) {
     pthread_once(&pango_fontmap_key_once, make_pango_fontmap_key);
     PangoFontMap *fm = (PangoFontMap *)pthread_getspecific(pango_fontmap_key);
@@ -88,9 +109,12 @@ static PangoFontMap *get_thread_pango_fontmap(void) {
     return fm;
 }
 
-/* Public cleanup callable by main to deterministically release this
- * thread's Pango/fontmap resources before calling FcFini() (fontconfig
- * finalizer). This will only affect the current thread (usually main).
+/*
+ * render_pango_cleanup
+ * ---------------------
+ * Deterministically free any PangoFontMap stored in this thread's
+ * thread-specific storage. Safe to call multiple times; useful to call
+ * before FcFini() to control teardown ordering.
  */
 void render_pango_cleanup(void) {
     pthread_once(&pango_fontmap_key_once, make_pango_fontmap_key);
@@ -101,26 +125,52 @@ void render_pango_cleanup(void) {
     }
 }
 
-/* runtime knobs */
-static int g_ssaa_override = 0;
-static int g_no_unsharp = 0;
+/* Runtime knobs: allow tests or CLI to tune rendering behavior. These are
+ * intentionally global and simple to adjust during development. */
+static int g_ssaa_override = 0; /* >0 forces a specific supersample factor */
+static int g_no_unsharp = 0;    /* disable unsharp sharpening when non-zero */
 void render_pango_set_ssaa_override(int ssaa) { g_ssaa_override = ssaa; }
 void render_pango_set_no_unsharp(int no) { g_no_unsharp = no; }
 
-// Palette presets
+/* Palette presets */
+/*
+ * init_palette
+ * ------------
+ * Initialize a 16-entry ARGB palette according to `mode`. `pal` must
+ * point to at least 16 uint32_t entries. If `pal` is NULL the call is a no-op.
+ */
 void init_palette(uint32_t *pal,const char *mode) {
     if (!pal) return;
 
+    /*
+     * Sets up a 16-color palette (`pal`) based on the specified `mode` string.
+     *
+     * Supported modes:
+     * - "greyscale": Generates a smooth greyscale palette from transparent to white.
+     * - "broadcast": Uses a broadcast palette with full-bright and half-bright colors,
+     *   providing intermediate luminance values for anti-aliased edges without semi-transparency.
+     * - "ebu-broadcast": Uses the full EBU 16-color CLUT, including half-bright variants
+     *   for improved anti-aliasing without compositing halos.
+     * - Default: Uses a simple broadcast palette with standard colors and transparent entries.
+     *
+     * Each palette entry is a 32-bit ARGB value. The first entry is always transparent.
+     * Half-bright variants use full alpha and half the RGB channel values to avoid
+     * semi-transparent compositing artifacts.
+     *
+     * Parameters:
+     *   mode - String specifying the palette mode.
+     *   pal  - Array of 16 uint32_t values to be filled with palette colors.
+     */
     if (mode && strcasecmp(mode,"greyscale")==0) {
-        // Smooth greyscale from transparent to white
-        pal[0] = 0x00000000; // transparent
+    /* Smooth greyscale from transparent to white */
+    pal[0] = 0x00000000; /* transparent */
         for (int i=1; i<16; i++) {
             int v = (i-1)*17;
             pal[i] = (0xFF<<24) | (v<<16) | (v<<8) | v;
         }
 
     } else if (mode && strcasecmp(mode,"broadcast")==0) {
-        // Broadcast palette with additional half-bright entries (helps anti-aliased edges)
+    /* Broadcast palette with additional half-bright entries (helps anti-aliased edges) */
         pal[0]=0x00000000; pal[1]=0xFFFFFFFF; pal[2]=0xFFFFFF00;
         pal[3]=0xFF00FFFF; pal[4]=0xFF00FF00; pal[5]=0xFFFF00FF;
         pal[6]=0xFFFF0000; pal[7]=0xFF0000FF; pal[8]=0xFF000000;
@@ -128,38 +178,38 @@ void init_palette(uint32_t *pal,const char *mode) {
         * luminance values for anti-aliased edges without introducing
         * semi-transparent compositing halos. Use full alpha (0xFF) and
         * halve RGB channels. */
-        pal[9]  = 0xFF7F7F7F; // half white
-        pal[10] = 0xFF7F7F00; // half yellow
-        pal[11] = 0xFF007F7F; // half cyan
-        pal[12] = 0xFF007F00; // half green
-        pal[13] = 0xFF7F007F; // half magenta
-        pal[14] = 0xFF7F0000; // half red
-        pal[15] = 0xFF00007F; // half blue
+    pal[9]  = 0xFF7F7F7F; /* half white */
+    pal[10] = 0xFF7F7F00; /* half yellow */
+    pal[11] = 0xFF007F7F; /* half cyan */
+    pal[12] = 0xFF007F00; /* half green */
+    pal[13] = 0xFF7F007F; /* half magenta */
+    pal[14] = 0xFF7F0000; /* half red */
+    pal[15] = 0xFF00007F; /* half blue */
 
     } else if (mode && strcasecmp(mode,"ebu-broadcast")==0) {
-        // Full EBU 16-color CLUT (full + half brightness)
-        pal[0]  = 0x00000000; // transparent
-        pal[1]  = 0xFFFFFFFF; // white
-        pal[2]  = 0xFFFFFF00; // yellow
-        pal[3]  = 0xFF00FFFF; // cyan
-        pal[4]  = 0xFF00FF00; // green
-        pal[5]  = 0xFFFF00FF; // magenta
-        pal[6]  = 0xFFFF0000; // red
-        pal[7]  = 0xFF0000FF; // blue
-        pal[8]  = 0xFF000000; // black
+    /* Full EBU 16-color CLUT (full + half brightness) */
+    pal[0]  = 0x00000000; /* transparent */
+    pal[1]  = 0xFFFFFFFF; /* white */
+    pal[2]  = 0xFFFFFF00; /* yellow */
+    pal[3]  = 0xFF00FFFF; /* cyan */
+    pal[4]  = 0xFF00FF00; /* green */
+    pal[5]  = 0xFFFF00FF; /* magenta */
+    pal[6]  = 0xFFFF0000; /* red */
+    pal[7]  = 0xFF0000FF; /* blue */
+    pal[8]  = 0xFF000000; /* black */
         /* half-bright variants (opaque half-RGB) rather than semi-transparent
         * entries: helps anti-aliased edges map to intermediate visible
         * colors without compositing dark halos. */
-        pal[9]  = 0xFF7F7F7F; // half white
-        pal[10] = 0xFF7F7F00; // half yellow
-        pal[11] = 0xFF007F7F; // half cyan
-        pal[12] = 0xFF007F00; // half green
-        pal[13] = 0xFF7F007F; // half magenta
-        pal[14] = 0xFF7F0000; // half red
-        pal[15] = 0xFF00007F; // half blue
+    pal[9]  = 0xFF7F7F7F; /* half white */
+    pal[10] = 0xFF7F7F00; /* half yellow */
+    pal[11] = 0xFF007F7F; /* half cyan */
+    pal[12] = 0xFF007F00; /* half green */
+    pal[13] = 0xFF7F007F; /* half magenta */
+    pal[14] = 0xFF7F0000; /* half red */
+    pal[15] = 0xFF00007F; /* half blue */
 
     } else {
-        // Default: same as simple broadcast
+    /* Default: same as simple broadcast */
         pal[0]=0x00000000; pal[1]=0xFFFFFFFF; pal[2]=0xFFFFFF00;
         pal[3]=0xFF00FFFF; pal[4]=0xFF00FF00; pal[5]=0xFFFF00FF;
         pal[6]=0xFFFF0000; pal[7]=0xFF000000;
@@ -167,6 +217,13 @@ void init_palette(uint32_t *pal,const char *mode) {
     }
 }
 
+/*
+ * nearest_palette_index
+ * ---------------------
+ * Fast Euclidean nearest-color search in RGB space. Returns an index
+ * within [0, npal). Used as a simple fallback when alpha is not
+ * considered.
+ */
 int nearest_palette_index(uint32_t *palette, int npal, uint32_t argb) {
     int best=1; int bestdiff=INT_MAX;
     int r=(argb>>16)&0xFF, g=(argb>>8)&0xFF, b=argb&0xFF;
@@ -183,6 +240,14 @@ int nearest_palette_index(uint32_t *palette, int npal, uint32_t argb) {
 /* Choose nearest palette index by comparing display (premultiplied) RGB
  * values. Both source and palette entries are converted to their effective
  * displayed color over black: channel_display = channel * (alpha/255). */
+/*
+ * nearest_palette_index_display
+ * -------------------------------
+ * Perceptual nearest-index search that operates on display (premultiplied)
+ * RGB components. Alpha mismatch is penalized to avoid picking
+ * semi-transparent palette entries for nearly-opaque source pixels which
+ * would produce dark halos after compositing.
+ */
 static int nearest_palette_index_display(uint32_t *palette, int npal, double rd, double gd, double bd, int src_alpha) {
     int best = 1;
     double bestdiff = 1e308;
@@ -228,6 +293,13 @@ static int nearest_palette_index_display(uint32_t *palette, int npal, double rd,
     return best;
 }
 
+/*
+ * srt_to_pango_markup
+ * -------------------
+ * Convert a small subset of SRT/HTML inline tags into Pango markup and
+ * escape XML special characters. Allocates and returns a NUL-terminated
+ * string; the caller must free it.
+ */
 char* srt_to_pango_markup(const char *srt_text) {
     if (!srt_text) return strdup("");
     size_t maxlen = strlen(srt_text)*4+1;
@@ -237,10 +309,12 @@ char* srt_to_pango_markup(const char *srt_text) {
         if (strncmp(p,"<i>",3)==0 || strncmp(p,"</i>",4)==0 ||
             strncmp(p,"<b>",3)==0 || strncmp(p,"</b>",4)==0 ||
             strncmp(p,"<u>",3)==0 || strncmp(p,"</u>",4)==0) {
+            /* Pass-through of simple inline tags */
             int len=(*p=='<'&&*(p+1)=='/')?4:3;
             strncpy(out,p,len); out+=len; p+=len;
         }
        else if (strncasecmp(p,"<font ",6)==0) {
+            /* Convert <font color="#RRGGBB"> to <span foreground="..."> */
             const char *end = strchr(p, '>');
             if (end) {
                 char tmp[256] = {0};
@@ -252,7 +326,7 @@ char* srt_to_pango_markup(const char *srt_text) {
                     continue;
                 }
             }
-            // If we didn’t match, just skip escaping
+            /* If unsupported, copy a single character to avoid dropping input */
             *out++ = *p++;
         }
         else if (strncasecmp(p,"</font>",7)==0) {
@@ -260,10 +334,8 @@ char* srt_to_pango_markup(const char *srt_text) {
             out += 7;
             p += 7;
         }
-        else if (strncasecmp(p,"</font>",7)==0) {
-            strcpy(out,"</span>"); out+=7; p+=7;
-        }
         else {
+            /* Escape XML entities */
             if(*p=='&'){ strcpy(out,"&amp;"); out+=5; }
             else if(*p=='<'){ strcpy(out,"&lt;"); out+=4; }
             else if(*p=='>'){ strcpy(out,"&gt;"); out+=4; }
@@ -274,6 +346,21 @@ char* srt_to_pango_markup(const char *srt_text) {
     *out='\0'; return buf;
 }
 
+/*
+ * render_text_pango
+ * -----------------
+ * Render the provided Pango markup into an indexed Bitmap suitable for
+ * the DVB/AVSubtitle pipeline. High-level steps:
+ *  1. Resolve font size (adaptive if fontsize<=0).
+ *  2. Create a supersampled Cairo surface and render the Pango layout at
+ *     higher resolution to improve edge quality.
+ *  3. Optionally blur/sharpen the supersampled surface and downsample.
+ *  4. Convert ARGB pixels to indexed palette using error-diffusion
+ *     dithering plus cleanup passes to remove speckles and short runs.
+ *
+ * The returned Bitmap contains allocated `idxbuf` and `palette` which
+ * the caller must free when no longer needed.
+ */
 Bitmap render_text_pango(const char *markup,
                           int disp_w, int disp_h,
                           int fontsize, const char *fontfam,
@@ -290,13 +377,13 @@ Bitmap render_text_pango(const char *markup,
     /* Ensure a per-thread fontmap exists (created on first use). */
     PangoFontMap *thread_fm = get_thread_pango_fontmap();
 
-    // --- Font size selection ---
-    // If caller passed a positive fontsize (CLI --fontsize), respect it.
-    // Otherwise compute a dynamic font size based on display height using
-    // targeted ranges for SD, HD and UHD:
-    //  SD:  ~18..22
-    //  HD:  ~40..48
-    //  UHD: ~80..88
+    /* --- Font size selection ---
+     * If caller passed a positive fontsize (CLI --fontsize), respect it.
+     * Otherwise compute a dynamic font size based on display height using
+     * targeted ranges for SD, HD and UHD:
+     *  SD:  ~18..22
+     *  HD:  ~40..48
+     *  UHD: ~80..88 */
     bool add_bg = false;
     if (fontsize > 0) {
         /* respect caller-provided fontsize (no upper clamp) */
@@ -326,13 +413,14 @@ Bitmap render_text_pango(const char *markup,
         fontsize = f;
     }
 
-    // Create common font description
+    /* Create common font description */
     PangoFontDescription *desc = pango_font_description_new();
     pango_font_description_set_family(desc, fontfam ? fontfam : "Lato");
-    //pango_font_description_set_weight(desc, PANGO_WEIGHT_HEAVY);
+
+    /* pango_font_description_set_weight(desc, PANGO_WEIGHT_HEAVY); */
     pango_font_description_set_absolute_size(desc, fontsize * PANGO_SCALE);
 
-    // --- Dummy layout for measurement ---
+    /* --- Dummy layout for measurement --- */
     cairo_surface_t *dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     cairo_t *cr_dummy = cairo_create(dummy);
     PangoContext *ctx_dummy = pango_font_map_create_context(thread_fm);
@@ -343,33 +431,34 @@ Bitmap render_text_pango(const char *markup,
     pango_layout_set_markup(layout_dummy, markup, -1);
 
     int lw, lh;
+
     pango_layout_get_pixel_size(layout_dummy, &lw, &lh);
 
-    // Debug resolved font
+    /* Debug resolved font */
    
 
-    // --- Placement in full frame ---
+    /* --- Placement in full frame --- */
     int margin_y = disp_h * 0.038;
     int text_x = (disp_w - lw) / 2;
     int text_y = disp_h - margin_y - lh;
     if (align_code >= 7) text_y = margin_y;
     else if (align_code >= 4 && align_code <= 6) text_y = (disp_h - lh) / 2;
 
-    // --- Adaptive supersampled rendering surface ---
-    // Choose supersample factor based on display height.
-    // SD gets a higher SSAA to avoid blockiness. For HD/UHD we also
-    // increase SSAA to keep glyph edges smooth at larger sizes.
-    // These choices balance quality vs CPU/memory; users can override
-    // with the ssaa_override runtime knob.
+    /* --- Adaptive supersampled rendering surface ---
+     * Choose supersample factor based on display height.
+     * SD gets a higher SSAA to avoid blockiness. For HD/UHD we also
+     * increase SSAA to keep glyph edges smooth at larger sizes.
+     * These choices balance quality vs CPU/memory; users can override
+     * with the ssaa_override runtime knob. */
     int ss;
     if (disp_h <= 576) {
-        ss = 2; // SD: increase supersample to further reduce blockiness on low res
+    ss = 2; /* SD: increase supersample to further reduce blockiness on low res */
     } else if (disp_h <= 1080) {
-        ss = 3; // HD: bump to 3x to improve edge fidelity compared to previous 2x
+    ss = 3; /* HD: bump to 3x to improve edge fidelity compared to previous 2x */
     } else if (disp_h <= 2160) {
-        ss = 4; // 4k/2160p target: use 4x for best quality on UHD
+    ss = 4; /* 4k/2160p target: use 4x for best quality on UHD */
     } else {
-        ss = 4; // very large displays: cap at 4x
+    ss = 4; /* very large displays: cap at 4x */
     }
     if (g_ssaa_override > 0) ss = g_ssaa_override;
     /* pad to accommodate strokes when upscaled; scale with fontsize so
@@ -381,7 +470,7 @@ Bitmap render_text_pango(const char *markup,
     cairo_surface_t *surface_ss = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ss_w, ss_h);
     cairo_t *cr = cairo_create(surface_ss);
     cairo_set_antialias(cr, CAIRO_ANTIALIAS_BEST);
-    cairo_scale(cr, (double)ss, (double)ss);  // draw at larger resolution then downscale
+    cairo_scale(cr, (double)ss, (double)ss);  /* draw at larger resolution then downscale */
 
     PangoContext *ctx_real = pango_font_map_create_context(thread_fm);
     /* For HD/UHD with stronger supersampling we prefer to disable
@@ -452,8 +541,8 @@ Bitmap render_text_pango(const char *markup,
     pango_cairo_show_layout(cr, layout_real);
     cairo_restore(cr);
 
-    // --- Downscale to target surface (1×) ---
-    /* Optionally apply a mild separable blur on the supersampled surface to
+    /* --- Downscale to target surface (1×) ---
+     * Optionally apply a mild separable blur on the supersampled surface to
      * reduce remaining high-frequency aliasing before downsampling. For
      * SSAA==3 a compact 3x3 box is used; for larger SSAA we use a 5-tap
      * separable kernel that better approximates a small Gaussian. The
@@ -478,8 +567,8 @@ Bitmap render_text_pango(const char *markup,
                 /* convert to linear (approx sRGB->linear) and horizontal blur (7-tap separable)
                  * Use a wider kernel on HD to smooth curve stepping more aggressively.
                  * Weights chosen approximate a small Gaussian: 1,6,15,20,15,6,1 (sum=64).
-                 */
-                /* Slightly stronger smoothing: increase wing/near-center weights
+                 *
+                 * Slightly stronger smoothing: increase wing/near-center weights
                  * to better reduce small curved-step artifacts without blurring
                  * shape excessively. New weights: 1,8,20,24,20,8,1 (sum=82). */
                 const int wts[7] = {1,8,20,24,20,8,1};
@@ -670,10 +759,10 @@ Bitmap render_text_pango(const char *markup,
      * amount*(orig - blur) back to the original. Operates on premultiplied
      * ARGB channels (This is acceptable for a small amount). */
     if (!g_no_unsharp) {
-        /* Reduce unsharp amount for higher SSAA: when supersampling is strong
-         * we need much less sharpening (or almost none) to avoid reintroducing
-         * blockiness. */
-    /* Disable unsharp at very high SSAA to avoid reintroducing
+    /* Reduce unsharp amount for higher SSAA: when supersampling is strong
+     * we need much less sharpening (or almost none) to avoid reintroducing
+     * blockiness. 
+     * Disable unsharp at very high SSAA to avoid reintroducing
      * aliasing-like artifacts; reduce amount progressively as ss grows. */
     double amount = 0.6; /* default strength */
     if (ss >= 6) amount = 0.0; /* very high SSAA: no sharpening */
@@ -1191,7 +1280,7 @@ Bitmap render_text_pango(const char *markup,
     bm.w = w;
     bm.h = h;
 
-    // Cleanup
+    /* Cleanup */
     pango_font_description_free(desc);
     g_object_unref(layout_dummy);
     g_object_unref(ctx_dummy);

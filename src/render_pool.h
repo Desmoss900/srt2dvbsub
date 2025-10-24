@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -43,18 +44,55 @@
 *   ✗ Commercial use requires a paid license.
 * ────────────────────────────────────────────────────────────────
 */
-
+#pragma once
 #ifndef RENDER_POOL_H
 #define RENDER_POOL_H
 
 #include <pthread.h>
 #include "render_pango.h"
 
-/* Initialize the render pool with nthreads (0 = disabled) */
+/*
+ * @file render_pool.h
+ * @brief Threaded rendering pool that asynchronously rasterizes Pango
+ * markup into the project's indexed `Bitmap` format.
+ *
+ * The render pool maintains a small set of worker threads that process
+ * submitted render jobs. Jobs can be submitted asynchronously and later
+ * retrieved by (track_id, cue_index) key. For synchronous needs, a
+ * convenience blocking API is provided that enqueues a job and waits for
+ * completion.
+ *
+ * Thread-safety and ownership:
+ *  - The pool copies string arguments when enqueuing, so callers may free
+ *    their buffers after submission.
+ *  - Returned `Bitmap` objects transfer ownership of `idxbuf` and `palette`
+ *    to the caller; the caller must free them (av_free is used internally).
+ */
+
+/*
+ * Initialize the render pool with `nthreads`. Pass 0 to disable the pool
+ * (render_pool_render_sync will call the renderer directly).
+ *
+ * @param nthreads Number of worker threads to start (>0). Returns 0 on
+ *                 success, -1 on failure (allocation/thread creation).
+ */
 int render_pool_init(int nthreads);
-/* Shutdown and free resources */
+
+/*
+ * Shutdown the render pool and free resources. Blocks until worker threads
+ * exit and queued jobs are freed. Any pending job results are freed as
+ * part of shutdown; callers should retrieve results prior to shutdown if
+ * they need them.
+ */
 void render_pool_shutdown(void);
-/* Synchronously render: workers will perform render_text_pango and this call returns the Bitmap (caller frees bm.idxbuf and bm.palette) */
+
+/*
+ * Synchronously render markup using the worker pool. If the pool is
+ * disabled, this calls render_text_pango() directly. Returns a Bitmap with
+ * allocated idxbuf and palette which the caller must free.
+ *
+ * @return Bitmap (may be empty with w==0 on failure).
+ */
 Bitmap render_pool_render_sync(const char *markup,
                                 int disp_w, int disp_h,
                                 int fontsize, const char *fontfam,
@@ -62,22 +100,21 @@ Bitmap render_pool_render_sync(const char *markup,
                                 const char *shadowcolor, int align_code,
                                 const char *palette_mode);
 
-/* Asynchronous API: submit a render job for track/ cue index. Returns 0 on success. Job will be processed by workers.
- * The job's markup is copied by the function. If pool isn't running, return -1. */
-/* Submit an asynchronous render job keyed by track_id and cue_index.
- * The markup and string args are copied by the pool; caller can free theirs after this returns.
+/*
+ * Submit an asynchronous render job keyed by (track_id, cue_index).
+ * The pool copies string arguments internally. Returns 0 on success and
+ * -1 if the pool is not running or on allocation failure.
  */
 int render_pool_submit_async(int track_id, int cue_index,
                              const char *markup, int disp_w, int disp_h, int fontsize,
                              const char *fontfam, const char *fgcolor, const char *outlinecolor,
                              const char *shadowcolor, int align_code, const char *palette_mode);
 
-
-/* Try to retrieve a completed render for track_id, cue_index. If found, fills out Bitmap and returns 1. If not ready, returns 0. On error, returns -1.
- * Caller takes ownership of Bitmap idxbuf/palette and must free them. */
-/* Try to obtain a completed job for the given track_id/cue_index.
- * If the job is done, returns 1 and fills *out with the Bitmap (ownership transferred to caller).
- * If the job exists but is not done, returns 0. If no job exists for that key, returns -1.
+/*
+ * Try to retrieve a completed job for the given (track_id, cue_index).
+ * If the job is done, returns 1 and fills `*out` with the Bitmap (ownership
+ * transferred to the caller). If the job exists but is not yet done,
+ * returns 0. If no job exists with that key, returns -1.
  */
 int render_pool_try_get(int track_id, int cue_index, Bitmap *out);
 

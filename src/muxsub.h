@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -52,6 +53,29 @@
 #include <libavcodec/avcodec.h>
 #include "subtrack.h"
 
+/**
+ * @file muxsub.h
+ * @brief Encode an AVSubtitle and write the resulting packet to the output.
+ *
+ * This helper wraps subtitle encoding and mux writing in a single
+ * convenience function. It encodes the provided `AVSubtitle` using the
+ * supplied `AVCodecContext`, wraps the encoded bytes into an `AVPacket`,
+ * and writes the packet into the output `AVFormatContext`.
+ *
+ * Example:
+ * @code
+ *   AVSubtitle *sub = make_subtitle(bm, start_ms, end_ms);
+ *   encode_and_write_subtitle(ctx, out_fmt, track, sub, pts90, 1, "pngs/1.png");
+ * @endcode
+ *
+ * @param ctx       Opened and initialized AVCodecContext for the subtitle codec.
+ * @param out_fmt   Opened AVFormatContext for the output container.
+ * @param track     SubTrack describing the subtitle stream (must have a valid AVStream*).
+ * @param sub       Pointer to a populated AVSubtitle. Caller retains ownership.
+ * @param pts90     Presentation timestamp in 90kHz ticks (used for pkt->pts/dts).
+ * @param bench_mode Non-zero to enable bench timing updates.
+ * @param dbg_png   Optional path to an associated debug PNG printed on success (may be NULL).
+ */
 void encode_and_write_subtitle(AVCodecContext *ctx,
                                       AVFormatContext *out_fmt,
                                       SubTrack *track,

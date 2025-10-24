@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -48,6 +49,45 @@
 
 #include "render_pango.h"
 
+/**
+ * @file debug_png.h
+ * @brief Debug helper to write internal Bitmaps to PNG files.
+ *
+ * This API is a small development helper used to persist rendered
+ * subtitle bitmaps (the project's internal `Bitmap` structure) as
+ * PNG images. It is intended for diagnostics and should only be used
+ * when the main program enables debug output (for example via a
+ * `--debug` flag).
+ *
+ * The implementation attempts to create parent directories for the
+ * target filename and prints a concise status message to stderr on
+ * success or failure. The function is intentionally non-fatal: it
+ * returns silently when given invalid input and reports errors only
+ * via stderr.
+ *
+ * Example:
+ * @code
+ *   Bitmap *bm = render_some_subtitle(...);
+ *   save_bitmap_png(bm, "pngs/sub_0001.png");
+ * @endcode
+ */
+
+/**
+ * Save a rendered Bitmap as a PNG file.
+ *
+ * @param bm Pointer to a Bitmap produced by the renderer. The function
+ *           expects `bm->idxbuf` and `bm->palette` to be present and
+ *           valid. If `bm` is NULL or missing required data, the
+ *           function returns without side effects.
+ * @param filename Path where the PNG should be written (relative or
+ *                 absolute). Parent directories will be created when
+ *                 possible.
+ *
+ * Behavior:
+ *   - Creates an ARGB Cairo surface, expands palette indices into
+ *     ARGB pixels, writes the PNG, and prints a status message to
+ *     stderr. On failure, an explanatory message is also printed.
+ */
 void save_bitmap_png(const Bitmap *bm, const char *filename);
 
 #endif

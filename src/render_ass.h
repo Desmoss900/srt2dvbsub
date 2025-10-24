@@ -24,7 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -43,9 +44,22 @@
 *   ✗ Commercial use requires a paid license.
 * ────────────────────────────────────────────────────────────────
 */
+#pragma once
 #ifndef RENDER_ASS_H
 #define RENDER_ASS_H
-#pragma once
+
+/**
+ * @file render_ass.h
+ * @brief libass-based renderer wrapper and helpers.
+ *
+ * This header declares a small wrapper around libass to create a renderer,
+ * manage ASS tracks/events, and rasterize ASS subtitles into the project's
+ * `Bitmap` format used by the DVB muxing pipeline. The implementation
+ * provides stub typedefs when libass is unavailable so the project can be
+ * built without libass support.
+ *
+ * Ownership: callers receiving a `Bitmap` must free `idxbuf` and `palette`.
+ */
 
 #include <stdint.h>
 #include "dvb_sub.h"   // for Bitmap struct
@@ -62,35 +76,110 @@ typedef struct ASS_Renderer ASS_Renderer;
 typedef struct ASS_Track ASS_Track;
 #endif
 
-// Initialize the libass library + renderer
+/**
+ * render_ass_init - initialize the libass library
+ *
+ * Initialize libass and allocate an ASS_Library instance used by the
+ * renderer and track APIs. On success the returned pointer must be
+ * released via render_ass_done() (or render_ass_free_lib()).
+ *
+ * Returns:
+ *  - pointer to an initialized ASS_Library on success
+ *  - NULL on failure
+ */
 ASS_Library* render_ass_init();
+
+/**
+ * Create and configure an ASS_Renderer sized to the given width and height.
+ *
+ * @param lib Initialized ASS_Library pointer.
+ * @param w   Frame width in pixels.
+ * @param h   Frame height in pixels.
+ * @return Pointer to a configured ASS_Renderer on success, or NULL on failure.
+ */
 ASS_Renderer* render_ass_renderer(ASS_Library *lib, int w, int h);
 
-// Create a new libass track
+/**
+ * Allocate a new ASS_Track container for styles and events.
+ *
+ * @param lib Initialized ASS_Library pointer.
+ * @return Pointer to an ASS_Track on success, or NULL on failure.
+ *
+ * Note: callers should free duplicated event text via render_ass_free_track()
+ * and release track resources according to libass usage rules.
+ */
 ASS_Track* render_ass_new_track(ASS_Library *lib);
 
-// Feed a subtitle event (SRT/ASS text, timing) into the track
+/**
+ * Append a timed subtitle event to a track.
+ *
+ * @param track    ASS_Track to receive the event (must be non-NULL).
+ * @param text     NUL-terminated UTF-8 text (may be NULL; treated as empty).
+ * @param start_ms Start time in milliseconds.
+ * @param end_ms   End time in milliseconds.
+ *
+ * The function duplicates `text` into libass-managed memory; the caller
+ * retains ownership of the original pointer. If event allocation fails the
+ * function returns silently.
+ */
 void render_ass_add_event(ASS_Track *track,
                           const char *text,
                           int64_t start_ms,
                           int64_t end_ms);
 
-// Render the frame at a given time (ms) into a Bitmap
+/**
+ * Render the ASS track at a timestamp into a Bitmap.
+ *
+ * @param renderer    Configured ASS_Renderer (must be non-NULL).
+ * @param track       ASS_Track to render (may be NULL -> empty Bitmap).
+ * @param now_ms      Timestamp in milliseconds.
+ * @param palette_mode Textual hint forwarded to init_palette() (may be NULL).
+ * @return A Bitmap with allocated `idxbuf` and `palette` on success, or an
+ *         empty Bitmap (w==0) on no-content or failure. Caller must free
+ *         `bm.idxbuf` and `bm.palette` when done.
+ */
 Bitmap render_ass_frame(ASS_Renderer *renderer,
                         ASS_Track *track,
                         int64_t now_ms,
                         const char *palette_mode);
 
-// Cleanup
+/**
+ * Cleanup renderer and library resources.
+ *
+ * @param lib      ASS_Library pointer previously returned by render_ass_init().
+ * @param renderer ASS_Renderer pointer previously returned by render_ass_renderer().
+ *
+ * The function calls ass_renderer_done(renderer) and ass_library_done(lib)
+ * when the respective pointers are non-NULL.
+ */
 void render_ass_done(ASS_Library *lib, ASS_Renderer *renderer);
 
+/**
+ * Install a minimal Default ASS style for a track.
+ *
+ * @param track   ASS_Track to receive the style (must be non-NULL).
+ * @param font    Font family name passed to ASS style.
+ * @param size    Font size in ASS units.
+ * @param fg      Foreground color string in "#RRGGBB" or "#AARRGGBB" form.
+ * @param outline Outline color string in the same format.
+ * @param shadow  Shadow/back color string in the same format.
+ *
+ * The function builds an in-memory ASS header with a "Default" style and
+ * feeds it to libass via ass_process_data().
+ */
 void render_ass_set_style(ASS_Track *track,
                           const char *font, int size,
                           const char *fg, const char *outline, const char *shadow);
 
-void render_ass_debug_styles(ASS_Track *track);                          
+/**
+ * Print a human-readable dump of styles in a track to stderr.
+ *
+ * @param track ASS_Track pointer to inspect. If NULL the function prints an
+ *              error message and returns.
+ */
+void render_ass_debug_styles(ASS_Track *track);
 
-// Convenience/free wrappers matching older name expectations
+/** Convenience/free wrappers matching older name expectations */
 void render_ass_free_track(ASS_Track *track);
 void render_ass_free_renderer(ASS_Renderer *renderer);
 void render_ass_free_lib(ASS_Library *lib);

@@ -53,6 +53,44 @@ PKG_CHECK_MODULES([FFMPEG],
   [AC_MSG_ERROR([Missing FFmpeg development libraries (libavformat, libavcodec, libavutil, libswscale)])])
 AC_DEFINE([HAVE_FONTCONFIG], [1], [Define if fontconfig is available])
 
+
+
+# Detect Git version info or fall back to PACKAGE_VERSION
+AC_MSG_CHECKING([for git version info])
+if test -d .git; then
+  GIT_VERSION=`git describe --tags --always --dirty 2>/dev/null || echo "unknown"`
+  GIT_COMMIT=`git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
+  GIT_DATE=`git log -1 --format=%cd --date=iso 2>/dev/null || date -Iseconds`
+else
+  GIT_VERSION="${PACKAGE_VERSION}"
+  GIT_COMMIT="release"
+  GIT_DATE=`date -Iseconds`
+fi
+
+AC_MSG_RESULT([$GIT_VERSION ($GIT_COMMIT, $GIT_DATE)])
+echo "[DEBUG] GIT_VERSION=$GIT_VERSION"
+echo "[DEBUG] GIT_COMMIT=$GIT_COMMIT"
+echo "[DEBUG] GIT_DATE=$GIT_DATE"
+
+# Export to Makefile substitutions (correct shell assignment)
+AC_SUBST(GIT_VERSION)
+AC_SUBST(GIT_COMMIT)
+AC_SUBST(GIT_DATE)
+
+# Generate concrete version.h in the source tree during configure so it is
+# available for both in-tree and out-of-tree builds and so source files that
+# include it directly can find it. This avoids brittle Makefile-time sed
+# substitutions which can be affected by Autoconf's own @VAR@ processing.
+AC_MSG_NOTICE([Generating src/version.h in source tree])
+if test -r "$srcdir/src/version.h.in" ; then
+  sed -e "s|@GIT_VERSION@|$GIT_VERSION|g" \
+      -e "s|@GIT_COMMIT@|$GIT_COMMIT|g" \
+      -e "s|@GIT_DATE@|$GIT_DATE|g" \
+      "$srcdir/src/version.h.in" > "$srcdir/src/version.h"
+else
+  AC_MSG_WARN([src/version.h.in not found; version.h will not be generated])
+fi
+
 # Generate output files
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

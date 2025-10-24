@@ -25,7 +25,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  *   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.info]  
+*   Website: [www.chili-iptv.info]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -45,6 +46,7 @@
 * ────────────────────────────────────────────────────────────────
 */
 
+
 #pragma once
 #ifndef SRT_PARSER_H
 #define SRT_PARSER_H
@@ -52,19 +54,55 @@
 #include <stdio.h>
 #include <stdint.h>
 
+/*
+ * @file srt_parser.h
+ * @brief Lightweight SRT/HTML/ASS parsing utilities.
+ *
+ * This module provides a small, dependency-free SRT parser used to
+ * convert .srt files into an in-memory array of cues (start/end/text).
+ * The parser performs basic normalization: it strips a leading UTF-8 BOM,
+ * converts simple HTML tags into ASS overrides, optionally preserves ASS
+ * markup, and normalizes whitespace/line-wrapping to fit SD/HD constraints.
+ *
+ * The parser is intentionally conservative and suitable for offline
+ * preprocessing of subtitle files. It does not implement a full ASS parser
+ * — for complex ASS features the project optionally uses libass via the
+ * render_ass module.
+ */
 
+/*
+ * Single parsed subtitle entry. 
+ */
 typedef struct {
-    int64_t start_ms, end_ms;
-    char *text;
-    int alignment;   // parsed {\anX} code
+    int64_t start_ms; /**< start time in milliseconds */
+    int64_t end_ms;   /**< end time in milliseconds */
+    char *text;       /**< UTF-8 markup text (caller frees) */
+    int alignment;    /**< alignment code parsed from {\anX} (1..9) */
 } SRTEntry;
 
+/*
+ * Parse an SRT file into an array of SRTEntry structures.
+ *
+ * @param filename Path to the SRT file to parse.
+ * @param entries_out Output pointer that will be set to a malloc()'d
+ *        array of SRTEntry structs. The caller is responsible for freeing
+ *        each entry's `text` and the array itself.
+ * @param qc Optional FILE* where quality-control warnings are written
+ *        (may be NULL).
+ * @return The number of parsed entries on success, or -1 on failure.
+ */
 int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc);
 
-// Convert HTML-like tags (<i>, <b>, <font color>) to ASS markup
+/*
+ * Convert minimal HTML (<i>, <b>, <font>) into ASS overrides. Caller
+ * must free the returned string. 
+ * */
 char* srt_html_to_ass(const char *in);
 
-// Remove all ASS/HTML tags for length/QC calculations
+/*
+ * Strip ASS/HTML tags from a string and return a newly allocated
+ * plain-text copy. Caller frees the result. 
+ */
 char* strip_tags(const char *in);
 
 #endif
