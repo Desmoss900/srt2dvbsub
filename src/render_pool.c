@@ -482,7 +482,6 @@ Bitmap render_pool_render_sync(const char *markup,
     /* wait for completion on the job's own cond var */
     pthread_mutex_lock(&job->done_mtx);
     while (atomic_load(&job->done) == 0) pthread_cond_wait(&job->done_cond, &job->done_mtx);
-    Bitmap bm = job->result;
     pthread_mutex_unlock(&job->done_mtx);
 
     /* cleanup job container but keep result for caller */

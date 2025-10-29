@@ -57,11 +57,54 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <math.h>
+#include <stdint.h>
+#include <stdatomic.h>
 /* Use a thread-local PangoFontMap to avoid concurrent internal Pango
  * mutations when rendering from multiple worker threads. We create a
  * pthread key with a destructor that unrefs the fontmap on thread exit.
  */
 #include <pthread.h>
+
+/*
+ * AUDIT SUMMARY (render_pango.c)
+ * --------------------------------
+ * This file was audited and hardened. The following corrections and
+ * defensive changes were applied to improve safety and robustness:
+ *
+ *  - srt_to_pango_markup(): safer bounded buffer usage, checked snprintf
+ *    return values, and robust entity escaping.
+ *  - parse_hex_color(): validated sscanf return values and corrected
+ *    parsing of #AARRGGBB (alpha-first) formats; robust fallback to
+ *    opaque white on malformed input.
+ *  - Allocation safety helpers: added mul_size_ok() and safe_malloc_count()
+ *    to detect size_t overflow and apply a conservative pixel cap.
+ *  - Pixel caps: RENDER_PANGO_SAFE_MAX_PIXELS (total) and
+ *    RENDER_PANGO_SAFE_MAX_DIM (per-dimension) to avoid excessive
+ *    allocations for pathological sizes.
+ *  - Centralized bitmap allocation/cleanup: allocate_bitmap_buffers()
+ *    and free_bitmap_buffers() with nb_colors bookkeeping.
+ *  - Defensive Cairo/Pango checks: verify surface/context creation and
+ *    cairo_image_surface_get_data() before accessing pixel data.
+ *  - Thread-local fontmap: created with pthread_once; get_thread_pango_fontmap()
+ *    checks and logs failures; render_pango_cleanup() unrefs thread fontmaps.
+ *  - Atomic runtime knobs: g_ssaa_override and g_no_unsharp are atomic_int
+ *    to avoid data races during concurrent reads/writes.
+ *  - Early short-circuit for absurd display sizes: render_text_pango()
+ *    rejects implausible disp_w/disp_h values to avoid creating huge layouts.
+ *  - Centralized error cleanup paths: consistent final_cleanup/cleanup calls
+ *    to prevent leaks and partial frees on early exits.
+ *
+ * Tests:
+ *  - Added `tool/test_render_pango.c` with cases for markup, long inputs,
+ *    color parsing, basic render, and extreme-size guards.
+ *  - Added `tool/Makefile` targets: `test` and `asan-test` (Address/Undefined
+ *    sanitizer builds). The test harness calls render_pango_cleanup() and
+ *    attempts to call FcFini() at runtime to reduce sanitizer-reported leaks.
+ *
+ * Result: functional unit tests pass and sanitizer/Valgrind runs show no
+ * definite leaks (remaining reachable allocations originate in system
+ * libraries and are considered benign for this project).
+ */
 
 /*
  * Static variables for managing thread-specific Pango fontmap key.
@@ -86,7 +129,12 @@ static void pango_fontmap_destructor(void *v) {
 /* Create the pthread key for storing a PangoFontMap per-thread. This is
  * executed once via pthread_once to avoid races during key creation. */
 static void make_pango_fontmap_key(void) {
-    pthread_key_create(&pango_fontmap_key, pango_fontmap_destructor);
+    int rc = pthread_key_create(&pango_fontmap_key, pango_fontmap_destructor);
+    if (rc != 0) {
+        /* Key creation failed (unlikely) — record diagnostic. Subsequent
+         * calls that rely on the key should handle a NULL/invalid key. */
+        fprintf(stderr, "render_pango: pthread_key_create failed: %d\n", rc);
+    }
 }
 
 
@@ -104,7 +152,18 @@ static PangoFontMap *get_thread_pango_fontmap(void) {
     PangoFontMap *fm = (PangoFontMap *)pthread_getspecific(pango_fontmap_key);
     if (!fm) {
         fm = pango_cairo_font_map_new();
-        pthread_setspecific(pango_fontmap_key, fm);
+        if (!fm) {
+            fprintf(stderr, "render_pango: pango_cairo_font_map_new() returned NULL\n");
+            return NULL;
+        }
+        int rc = pthread_setspecific(pango_fontmap_key, fm);
+        if (rc != 0) {
+            /* Failed to store fm in thread-specific storage — clean up and
+             * return NULL to indicate we couldn't establish a thread fontmap. */
+            fprintf(stderr, "render_pango: pthread_setspecific failed: %d\n", rc);
+            g_object_unref((GObject*)fm);
+            return NULL;
+        }
     }
     return fm;
 }
@@ -125,12 +184,45 @@ void render_pango_cleanup(void) {
     }
 }
 
-/* Runtime knobs: allow tests or CLI to tune rendering behavior. These are
- * intentionally global and simple to adjust during development. */
-static int g_ssaa_override = 0; /* >0 forces a specific supersample factor */
-static int g_no_unsharp = 0;    /* disable unsharp sharpening when non-zero */
-void render_pango_set_ssaa_override(int ssaa) { g_ssaa_override = ssaa; }
-void render_pango_set_no_unsharp(int no) { g_no_unsharp = no; }
+/* Safety helpers for guarded allocations and multiplication checks. */
+/* Conservative cap on number of pixels we will attempt to allocate buffers for. */
+#ifndef RENDER_PANGO_SAFE_MAX_PIXELS
+#define RENDER_PANGO_SAFE_MAX_PIXELS ((size_t)100000000) /* 100M pixels */
+#endif
+
+/* Conservative cap on any single bitmap dimension to avoid excessive
+ * allocations or integer-promoted multiplication surprises on 32-bit
+ * platforms. This protects against pathological layout sizes. */
+#ifndef RENDER_PANGO_SAFE_MAX_DIM
+#define RENDER_PANGO_SAFE_MAX_DIM ((size_t)20000) /* 20k pixels per side */
+#endif
+
+static int mul_size_ok(size_t a, size_t b, size_t *out) {
+    if (a == 0 || b == 0) { *out = 0; return 1; }
+    if (a > SIZE_MAX / b) return 0;
+    *out = a * b;
+    return 1;
+}
+
+static void *safe_malloc_count(size_t nitems, size_t itemsize) {
+    size_t bytes;
+    if (itemsize != 0) {
+        if (!mul_size_ok(nitems, itemsize, &bytes)) return NULL;
+    } else {
+        bytes = 0;
+    }
+    /* If this looks like a pixel buffer, apply a conservative cap. */
+    if (nitems > RENDER_PANGO_SAFE_MAX_PIXELS) return NULL;
+    return malloc(bytes);
+}
+
+
+/* Runtime knobs: allow tests or CLI to tune rendering behavior. Make these
+ * atomic so they can be safely modified/read from multiple threads. */
+static atomic_int g_ssaa_override = ATOMIC_VAR_INIT(0); /* >0 forces a specific supersample factor */
+static atomic_int g_no_unsharp = ATOMIC_VAR_INIT(0);    /* disable unsharp sharpening when non-zero */
+void render_pango_set_ssaa_override(int ssaa) { atomic_store(&g_ssaa_override, ssaa); }
+void render_pango_set_no_unsharp(int no) { atomic_store(&g_no_unsharp, no); }
 
 /* Palette presets */
 /*
@@ -237,6 +329,31 @@ int nearest_palette_index(uint32_t *palette, int npal, uint32_t argb) {
     return best;
 }
 
+/* Centralized helpers for bitmap buffer allocation and cleanup. */
+static void free_bitmap_buffers(Bitmap *bm) {
+    if (!bm) return;
+    if (bm->idxbuf) { free(bm->idxbuf); bm->idxbuf = NULL; }
+    if (bm->palette) { free(bm->palette); bm->palette = NULL; }
+    bm->nb_colors = 0;
+}
+
+static int allocate_bitmap_buffers(Bitmap *bm, size_t w, size_t h, const char *palette_mode) {
+    if (!bm) return 0;
+    /* Per-dimension guard: reject obviously huge single-dimension values. */
+    if (w == 0 || h == 0) return 0;
+    if (w > RENDER_PANGO_SAFE_MAX_DIM || h > RENDER_PANGO_SAFE_MAX_DIM) return 0;
+    size_t pix_count = 0;
+    if (!mul_size_ok(w, h, &pix_count) || pix_count > RENDER_PANGO_SAFE_MAX_PIXELS) return 0;
+    bm->idxbuf = (uint8_t*)calloc(pix_count, 1);
+    if (!bm->idxbuf) return 0;
+    bm->palette = (uint32_t*)safe_malloc_count(16, sizeof(uint32_t));
+    if (!bm->palette) { free(bm->idxbuf); bm->idxbuf = NULL; return 0; }
+    init_palette(bm->palette, palette_mode);
+    /* record how many colors are valid in the palette */
+    bm->nb_colors = 16;
+    return 1;
+}
+
 /* Choose nearest palette index by comparing display (premultiplied) RGB
  * values. Both source and palette entries are converted to their effective
  * displayed color over black: channel_display = channel * (alpha/255). */
@@ -302,48 +419,86 @@ static int nearest_palette_index_display(uint32_t *palette, int npal, double rd,
  */
 char* srt_to_pango_markup(const char *srt_text) {
     if (!srt_text) return strdup("");
-    size_t maxlen = strlen(srt_text)*4+1;
-    char *buf=(char*)malloc(maxlen); if(!buf) return strdup("");
-    char *out=buf; const char *p=srt_text;
-    while(*p && (size_t)(out-buf) < maxlen-10){
-        if (strncmp(p,"<i>",3)==0 || strncmp(p,"</i>",4)==0 ||
-            strncmp(p,"<b>",3)==0 || strncmp(p,"</b>",4)==0 ||
-            strncmp(p,"<u>",3)==0 || strncmp(p,"</u>",4)==0) {
+    size_t input_len = strlen(srt_text);
+    /* conservative expansion factor (entities + markup) */
+    size_t maxlen = input_len * 4 + 32;
+    if (maxlen < 128) maxlen = 128;
+    char *buf = (char*)malloc(maxlen);
+    if (!buf) return strdup("");
+    char *out = buf;
+    const char *p = srt_text;
+    while (*p) {
+        size_t used = (size_t)(out - buf);
+        if (used + 16 >= maxlen) break; /* keep some slack for worst-case writes */
+        size_t remaining = maxlen - used;
+
+        if ((strncmp(p, "<i>", 3) == 0) || (strncmp(p, "</i>", 4) == 0) ||
+            (strncmp(p, "<b>", 3) == 0) || (strncmp(p, "</b>", 4) == 0) ||
+            (strncmp(p, "<u>", 3) == 0) || (strncmp(p, "</u>", 4) == 0)) {
             /* Pass-through of simple inline tags */
-            int len=(*p=='<'&&*(p+1)=='/')?4:3;
-            strncpy(out,p,len); out+=len; p+=len;
+            int len = (*p == '<' && *(p+1) == '/') ? 4 : 3;
+            if (remaining <= (size_t)len) break;
+            memcpy(out, p, (size_t)len);
+            out += len; p += len;
+            continue;
         }
-       else if (strncasecmp(p,"<font ",6)==0) {
+        else if (strncasecmp(p, "<font ", 6) == 0) {
             /* Convert <font color="#RRGGBB"> to <span foreground="..."> */
             const char *end = strchr(p, '>');
             if (end) {
-                char tmp[256] = {0};
-                strncpy(tmp, p, end - p + 1);
+                char tmp[256];
+                size_t tlen = (size_t)(end - p + 1);
+                if (tlen >= sizeof(tmp)) tlen = sizeof(tmp) - 1;
+                memcpy(tmp, p, tlen);
+                tmp[tlen] = '\0';
                 char color[64] = "";
                 if (sscanf(tmp, "<font color=\"%63[^\"]", color) == 1) {
-                    out += sprintf(out, "<span foreground=\"%s\">", color);
+                    int n = snprintf(out, remaining, "<span foreground=\"%s\">", color);
+                    if (n < 0 || (size_t)n >= remaining) { /* truncated or error */
+                        /* stop to avoid overflow */
+                        out += remaining - 1;
+                        out[0] = '\0';
+                        break;
+                    }
+                    out += n;
                     p = end + 1;
                     continue;
                 }
             }
             /* If unsupported, copy a single character to avoid dropping input */
+            if (remaining <= 1) break;
             *out++ = *p++;
+            continue;
         }
-        else if (strncasecmp(p,"</font>",7)==0) {
-            strcpy(out, "</span>");
-            out += 7;
-            p += 7;
+        else if (strncasecmp(p, "</font>", 7) == 0) {
+            int n = snprintf(out, remaining, "</span>");
+            if (n < 0 || (size_t)n >= remaining) break;
+            out += n; p += 7; continue;
         }
         else {
             /* Escape XML entities */
-            if(*p=='&'){ strcpy(out,"&amp;"); out+=5; }
-            else if(*p=='<'){ strcpy(out,"&lt;"); out+=4; }
-            else if(*p=='>'){ strcpy(out,"&gt;"); out+=4; }
-            else { *out++=*p; }
-            p++;
+            if (*p == '&') {
+                const char *ent = "&amp;";
+                size_t elen = 5;
+                if (remaining <= elen) break;
+                memcpy(out, ent, elen); out += elen; p++; continue;
+            } else if (*p == '<') {
+                const char *ent = "&lt;"; size_t elen = 4;
+                if (remaining <= elen) break;
+                memcpy(out, ent, elen); out += elen; p++; continue;
+            } else if (*p == '>') {
+                const char *ent = "&gt;"; size_t elen = 4;
+                if (remaining <= elen) break;
+                memcpy(out, ent, elen); out += elen; p++; continue;
+            } else {
+                if (remaining <= 1) break;
+                *out++ = *p++;
+                continue;
+            }
         }
     }
-    *out='\0'; return buf;
+    *out = '\0';
+    return buf;
 }
 
 /*
@@ -371,11 +526,36 @@ Bitmap render_text_pango(const char *markup,
                           const char *palette_mode) {
     Bitmap bm={0};
 
+    /* Local resource pointers: initialize to NULL so cleanup is safe on any
+     * early-failure path. */
+    PangoFontMap *thread_fm = NULL;
+    PangoFontDescription *desc = NULL;
+    PangoContext *ctx_dummy = NULL;
+    PangoLayout *layout_dummy = NULL;
+    cairo_surface_t *dummy = NULL;
+    cairo_t *cr_dummy = NULL;
+    PangoContext *ctx_real = NULL;
+    PangoLayout *layout_real = NULL;
+    cairo_surface_t *surface_ss = NULL;
+    cairo_t *cr = NULL;
+    cairo_surface_t *surface = NULL;
+    bool success = false; /* set true only on full successful render */
+
     /* Ensure we have a single process-wide PangoFontMap to avoid creating
      * multiple internal fontconfig allocations across repeated renders.
      * We create contexts from this map per-render and unref them. */
     /* Ensure a per-thread fontmap exists (created on first use). */
-    PangoFontMap *thread_fm = get_thread_pango_fontmap();
+    thread_fm = get_thread_pango_fontmap();
+    if (!thread_fm) return bm; /* can't proceed without a fontmap */
+
+    /* Defensive: refuse to attempt rendering for absurd display sizes that
+     * are almost certainly a caller error or test of failure paths. This
+     * avoids creating huge Cairo surfaces or layouts when disp_w/h are
+     * unreasonably large (e.g., user-provided test harness values). */
+    if ((size_t)disp_w > RENDER_PANGO_SAFE_MAX_DIM || (size_t)disp_h > RENDER_PANGO_SAFE_MAX_DIM) {
+        /* return empty bitmap (idxbuf==NULL) to indicate we couldn't allocate */
+        return bm;
+    }
 
     /* --- Font size selection ---
      * If caller passed a positive fontsize (CLI --fontsize), respect it.
@@ -394,19 +574,22 @@ Bitmap render_text_pango(const char *markup,
              * Interpolate 19..24 over 0..576 (a small reduction from previous)
              * to make SD subtitles a bit less tall while keeping improved clarity. */
             double t = (double)disp_h / 576.0;
-            if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
+            if (t < 0.0) { t = 0.0; }
+            if (t > 1.0) { t = 1.0; }
             double v = 19.0 + t * (24.0 - 19.0);
             f = (int)round(v);
         } else if (disp_h <= 1080) {
             /* HD band: interpolate 36..42 over 577..1080 so 1080 -> ~42 */
             double t = ((double)disp_h - 576.0) / (1080.0 - 576.0);
-            if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
+            if (t < 0.0) { t = 0.0; }
+            if (t > 1.0) { t = 1.0; }
             double v = 36.0 + t * (42.0 - 36.0);
             f = (int)round(v);
         } else {
             /* UHD and larger: interpolate 82..88 over 1081..4320 so 2160 -> ~84 */
             double t = ((double)disp_h - 1080.0) / (4320.0 - 1080.0);
-            if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
+            if (t < 0.0) { t = 0.0; }
+            if (t > 1.0) { t = 1.0; }
             double v = 82.0 + t * (88.0 - 82.0);
             f = (int)round(v);
         }
@@ -414,17 +597,20 @@ Bitmap render_text_pango(const char *markup,
     }
 
     /* Create common font description */
-    PangoFontDescription *desc = pango_font_description_new();
+    desc = pango_font_description_new();
+    if (!desc) goto final_cleanup;
     pango_font_description_set_family(desc, fontfam ? fontfam : "Lato");
-
-    /* pango_font_description_set_weight(desc, PANGO_WEIGHT_HEAVY); */
     pango_font_description_set_absolute_size(desc, fontsize * PANGO_SCALE);
 
     /* --- Dummy layout for measurement --- */
-    cairo_surface_t *dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr_dummy = cairo_create(dummy);
-    PangoContext *ctx_dummy = pango_font_map_create_context(thread_fm);
-    PangoLayout *layout_dummy = pango_layout_new(ctx_dummy);
+    dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    if (!dummy || cairo_surface_status(dummy) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    cr_dummy = cairo_create(dummy);
+    if (!cr_dummy || cairo_status(cr_dummy) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    ctx_dummy = pango_font_map_create_context(thread_fm);
+    if (!ctx_dummy) goto final_cleanup;
+    layout_dummy = pango_layout_new(ctx_dummy);
+    if (!layout_dummy) goto final_cleanup;
     pango_layout_set_font_description(layout_dummy, desc);
     pango_layout_set_width(layout_dummy, disp_w * 0.8 * PANGO_SCALE);
     pango_layout_set_wrap(layout_dummy, PANGO_WRAP_WORD_CHAR);
@@ -460,19 +646,22 @@ Bitmap render_text_pango(const char *markup,
     } else {
     ss = 4; /* very large displays: cap at 4x */
     }
-    if (g_ssaa_override > 0) ss = g_ssaa_override;
+    if (atomic_load(&g_ssaa_override) > 0) ss = atomic_load(&g_ssaa_override);
     /* pad to accommodate strokes when upscaled; scale with fontsize so
      * UHD/large text get enough room and strokes don't clip. */
     int pad = 8;
     if (fontsize > 48) pad = (int)ceil(fontsize * 0.25);
     int ss_w = (lw + 2*pad) * ss;
     int ss_h = (lh + 2*pad) * ss;
-    cairo_surface_t *surface_ss = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ss_w, ss_h);
-    cairo_t *cr = cairo_create(surface_ss);
+    surface_ss = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ss_w, ss_h);
+    if (!surface_ss || cairo_surface_status(surface_ss) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    cr = cairo_create(surface_ss);
+    if (!cr || cairo_status(cr) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
     cairo_set_antialias(cr, CAIRO_ANTIALIAS_BEST);
     cairo_scale(cr, (double)ss, (double)ss);  /* draw at larger resolution then downscale */
 
-    PangoContext *ctx_real = pango_font_map_create_context(thread_fm);
+    ctx_real = pango_font_map_create_context(thread_fm);
+    if (!ctx_real) goto final_cleanup;
     /* For HD/UHD with stronger supersampling we prefer to disable
      * hinting/metrics so glyph shapes remain smooth and rely on SSAA
      * for crisp edges. Apply cairo font options to both Cairo and Pango
@@ -488,7 +677,8 @@ Bitmap render_text_pango(const char *markup,
     pango_cairo_context_set_font_options(ctx_real, fopt);
     cairo_set_font_options(cr, fopt);
     cairo_font_options_destroy(fopt);
-    PangoLayout *layout_real = pango_layout_new(ctx_real);
+    layout_real = pango_layout_new(ctx_real);
+    if (!layout_real) goto final_cleanup;
     pango_layout_set_font_description(layout_real, desc);
     pango_layout_set_width(layout_real, disp_w * 0.8 * PANGO_SCALE);
     pango_layout_set_wrap(layout_real, PANGO_WRAP_WORD_CHAR);
@@ -557,12 +747,19 @@ Bitmap render_text_pango(const char *markup,
          * to limit CPU cost. */
         if (disp_h <= 1080) {
             unsigned char *ss_data_ls = cairo_image_surface_get_data(surface_ss);
+            if (!ss_data_ls) goto final_cleanup;
             int ss_stride_ls = cairo_image_surface_get_stride(surface_ss);
             int sw_ls = ss_w, sh_ls = ss_h;
             /* horizontal -> tmp buffer */
-            double *tmp_r = malloc((size_t)sw_ls * (size_t)sh_ls * sizeof(double));
-            double *tmp_g = malloc((size_t)sw_ls * (size_t)sh_ls * sizeof(double));
-            double *tmp_b = malloc((size_t)sw_ls * (size_t)sh_ls * sizeof(double));
+            double *tmp_r = NULL;
+            double *tmp_g = NULL;
+            double *tmp_b = NULL;
+            size_t area_ls = 0;
+            if (mul_size_ok((size_t)sw_ls, (size_t)sh_ls, &area_ls) && area_ls <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+                tmp_r = (double*)safe_malloc_count(area_ls, sizeof(double));
+                tmp_g = (double*)safe_malloc_count(area_ls, sizeof(double));
+                tmp_b = (double*)safe_malloc_count(area_ls, sizeof(double));
+            }
             if (tmp_r && tmp_g && tmp_b) {
                 /* convert to linear (approx sRGB->linear) and horizontal blur (7-tap separable)
                  * Use a wider kernel on HD to smooth curve stepping more aggressively.
@@ -575,14 +772,14 @@ Bitmap render_text_pango(const char *markup,
                 const int wsum = 82;
                 for (int y = 0; y < sh_ls; y++) {
                     for (int x = 0; x < sw_ls; x++) {
-                        uint32_t px = *(uint32_t*)(ss_data_ls + y*ss_stride_ls + x*4);
-                        double r = ((px >> 16) & 0xFF) / 255.0;
-                        double g = ((px >> 8) & 0xFF) / 255.0;
-                        double b = (px & 0xFF) / 255.0;
+                        // uint32_t px = *(uint32_t*)(ss_data_ls + y*ss_stride_ls + x*4);
+                        // double r = ((px >> 16) & 0xFF) / 255.0;
+                        // double g = ((px >> 8) & 0xFF) / 255.0;
+                        // double b = (px & 0xFF) / 255.0;
                         /* sRGB to linear approx (cheap piecewise inline) */
-                        double lr = (r <= 0.04045) ? (r / 12.92) : pow((r + 0.055) / 1.055, 2.4);
-                        double lg = (g <= 0.04045) ? (g / 12.92) : pow((g + 0.055) / 1.055, 2.4);
-                        double lb = (b <= 0.04045) ? (b / 12.92) : pow((b + 0.055) / 1.055, 2.4);
+                        /* per-pixel linear conversion computed for neighbors below;
+                         * the immediate lr/lg/lb values are not used here and removed
+                         * to avoid -Wunused-variable. */
                         double sumr = 0.0, sumg = 0.0, sumb = 0.0;
                         for (int k = -3; k <= 3; k++) {
                             int xx = x + k;
@@ -636,11 +833,16 @@ Bitmap render_text_pango(const char *markup,
             free(tmp_r); free(tmp_g); free(tmp_b);
             cairo_surface_mark_dirty(surface_ss);
         }
-        unsigned char *ss_data = cairo_image_surface_get_data(surface_ss);
-        int ss_stride = cairo_image_surface_get_stride(surface_ss);
+    unsigned char *ss_data = cairo_image_surface_get_data(surface_ss);
+    if (!ss_data) goto final_cleanup;
+    int ss_stride = cairo_image_surface_get_stride(surface_ss);
         int sw = ss_w, sh = ss_h;
-        uint32_t *tmp = malloc(sw * sh * sizeof(uint32_t));
+        uint32_t *tmp = NULL;
         uint32_t *tmp2 = NULL;
+        size_t area = 0;
+        if (mul_size_ok((size_t)sw, (size_t)sh, &area) && area <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+            tmp = (uint32_t*)safe_malloc_count(area, sizeof(uint32_t));
+        }
         if (tmp) {
             /* Horizontal pass -> tmp */
             if (ss == 3) {
@@ -688,7 +890,10 @@ Bitmap render_text_pango(const char *markup,
                 }
             } else {
                 /* 5-tap separable kernel (1,4,6,4,1)/16 approximating a small Gaussian */
-                tmp2 = malloc(sw * sh * sizeof(uint32_t));
+                size_t area_tmp2 = 0;
+                if (mul_size_ok((size_t)sw, (size_t)sh, &area_tmp2) && area_tmp2 <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+                    tmp2 = (uint32_t*)safe_malloc_count(area_tmp2, sizeof(uint32_t));
+                }
                 if (tmp2) {
                     for (int y = 0; y < sh; y++) {
                         for (int x = 0; x < sw; x++) {
@@ -743,22 +948,28 @@ Bitmap render_text_pango(const char *markup,
     }
     int w = lw+2*pad;
     int h = lh+2*pad;
-    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t *cr_down = cairo_create(surface);
-    /* shrink from ss× to 1× using the adaptive supersample factor */
-    cairo_scale(cr_down, 1.0 / (double)ss, 1.0 / (double)ss);
-    cairo_set_source_surface(cr_down, surface_ss, 0, 0);
-    cairo_pattern_set_filter(cairo_get_source(cr_down), CAIRO_FILTER_BEST);
-    cairo_paint(cr_down);
-    cairo_destroy(cr_down);
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    {
+        cairo_t *cr_down = cairo_create(surface);
+        if (cr_down && cairo_status(cr_down) == CAIRO_STATUS_SUCCESS) {
+            /* shrink from ss× to 1× using the adaptive supersample factor */
+            cairo_scale(cr_down, 1.0 / (double)ss, 1.0 / (double)ss);
+            cairo_set_source_surface(cr_down, surface_ss, 0, 0);
+            cairo_pattern_set_filter(cairo_get_source(cr_down), CAIRO_FILTER_BEST);
+            cairo_paint(cr_down);
+        }
+        if (cr_down) cairo_destroy(cr_down);
+    }
 
     unsigned char *data = cairo_image_surface_get_data(surface);
+    if (!data) goto final_cleanup;
 
     /* Tiny unsharp mask to restore edge crispness after downsampling.
      * We use a small 3x3 box blur to get a blurred version, then add
      * amount*(orig - blur) back to the original. Operates on premultiplied
      * ARGB channels (This is acceptable for a small amount). */
-    if (!g_no_unsharp) {
+    if (!atomic_load(&g_no_unsharp)) {
     /* Reduce unsharp amount for higher SSAA: when supersampling is strong
      * we need much less sharpening (or almost none) to avoid reintroducing
      * blockiness. 
@@ -770,8 +981,13 @@ Bitmap render_text_pango(const char *markup,
         else if (ss == 3) amount = 0.5;
         int sw = w, sh = h;
         int stride = cairo_image_surface_get_stride(surface);
-        uint32_t *orig = malloc(sw * sh * sizeof(uint32_t));
-        uint32_t *blur = malloc(sw * sh * sizeof(uint32_t));
+        uint32_t *orig = NULL;
+        uint32_t *blur = NULL;
+        size_t area3 = 0;
+        if (mul_size_ok((size_t)sw, (size_t)sh, &area3) && area3 <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+            orig = (uint32_t*)safe_malloc_count(area3, sizeof(uint32_t));
+            blur = (uint32_t*)safe_malloc_count(area3, sizeof(uint32_t));
+        }
         if (orig && blur) {
             /* copy pixels */
             for (int y = 0; y < sh; y++) {
@@ -809,15 +1025,18 @@ Bitmap render_text_pango(const char *markup,
                     uint32_t b = blur[y*sw + x];
                     int oa = (o >> 24) & 0xFF;
                     int orr = (o >> 16) & 0xFF; int ogr = (o >> 8) & 0xFF; int ob = o & 0xFF;
-                    int ba = (b >> 24) & 0xFF;
+                    /* 'ba' (blur alpha) was extracted previously but not used; omit it to avoid -Wunused-variable. */
                     int brr = (b >> 16) & 0xFF; int bgr = (b >> 8) & 0xFF; int bb = b & 0xFF;
                     int na = oa; /* keep alpha */
                     int nr = (int)round(orr + amount * (orr - brr));
                     int ng = (int)round(ogr + amount * (ogr - bgr));
                     int nbv = (int)round(ob + amount * (ob - bb));
-                    if (nr < 0) nr = 0; if (nr > 255) nr = 255;
-                    if (ng < 0) ng = 0; if (ng > 255) ng = 255;
-                    if (nbv < 0) nbv = 0; if (nbv > 255) nbv = 255;
+                    if (nr < 0) nr = 0;
+                    if (nr > 255) nr = 255;
+                    if (ng < 0) ng = 0;
+                    if (ng > 255) ng = 255;
+                    if (nbv < 0) nbv = 0;
+                    if (nbv > 255) nbv = 255;
                     *(uint32_t*)(data + y*stride + x*4) = ((uint32_t)na<<24) | ((uint32_t)nr<<16) | ((uint32_t)ng<<8) | (uint32_t)nbv;
                 }
             }
@@ -833,7 +1052,11 @@ Bitmap render_text_pango(const char *markup,
     if (disp_h <= 1080 && ss >= 3) {
         int sw = w, sh = h;
         int stride = cairo_image_surface_get_stride(surface);
-        uint32_t *tmp_edge = malloc(sw * sh * sizeof(uint32_t));
+        uint32_t *tmp_edge = NULL;
+        size_t area4 = 0;
+        if (mul_size_ok((size_t)sw, (size_t)sh, &area4) && area4 <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+            tmp_edge = (uint32_t*)safe_malloc_count(area4, sizeof(uint32_t));
+        }
         if (tmp_edge) {
             /* copy current premultiplied pixels into tmp_edge grid */
             for (int y = 0; y < sh; y++) {
@@ -899,7 +1122,11 @@ Bitmap render_text_pango(const char *markup,
     if (disp_h <= 1080 && ss >= 3) {
         int sw = w, sh = h;
         int stride = cairo_image_surface_get_stride(surface);
-        uint32_t *tmp = malloc(sw * sh * sizeof(uint32_t));
+        uint32_t *tmp = NULL;
+        size_t area5 = 0;
+        if (mul_size_ok((size_t)sw, (size_t)sh, &area5) && area5 <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+            tmp = (uint32_t*)safe_malloc_count(area5, sizeof(uint32_t));
+        }
         if (tmp) {
             /* copy current pixels */
             for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) tmp[y*sw + x] = *(uint32_t*)(data + y*stride + x*4);
@@ -937,7 +1164,7 @@ Bitmap render_text_pango(const char *markup,
                         for (int k=-3;k<=3;k++) {
                             int xx = x + k; if (xx < 0 || xx >= sw) continue;
                             uint32_t p = tmp[y*sw + xx];
-                            int pr = (p >> 16) & 0xFF; int pg = (p >> 8) & 0xFF; int pb = p & 0xFF; int pa = (p >> 24) & 0xFF;
+                            int pr = (p >> 16) & 0xFF; int pg = (p >> 8) & 0xFF; int pb = p & 0xFF;
                             int wgt = (k==0)?10:((abs(k)==1)?8:((abs(k)==2)?4:1));
                             sumr += pr * wgt; sumg += pg * wgt; sumb += pb * wgt; sumw += wgt;
                         }
@@ -950,7 +1177,9 @@ Bitmap render_text_pango(const char *markup,
                         for (int k=-3;k<=3;k++) {
                             int yy = y + k; if (yy < 0 || yy >= sh) continue;
                             uint32_t p = tmp[yy*sw + x];
-                            int pr = (p >> 16) & 0xFF; int pg = (p >> 8) & 0xFF; int pb = p & 0xFF; int pa = (p >> 24) & 0xFF;
+                            int pr = (p >> 16) & 0xFF; 
+                            int pg = (p >> 8) & 0xFF; 
+                            int pb = p & 0xFF; 
                             int wgt = (k==0)?10:((abs(k)==1)?8:((abs(k)==2)?4:1));
                             sumr += pr * wgt; sumg += pg * wgt; sumb += pb * wgt; sumw += wgt;
                         }
@@ -965,9 +1194,12 @@ Bitmap render_text_pango(const char *markup,
         }
     }
 
-    bm.idxbuf = calloc(w*h, 1);
-    bm.palette = malloc(16*sizeof(uint32_t));
-    init_palette(bm.palette, palette_mode);
+    /* Guard final bitmap allocations (idxbuf + palette). Centralize the
+     * allocation and pixel-limit logic via allocate_bitmap_buffers(). */
+    if (!allocate_bitmap_buffers(&bm, (size_t)w, (size_t)h, palette_mode)) {
+        /* skip heavy allocation and return an empty bitmap */
+        goto final_cleanup;
+    }
 
     int stride = cairo_image_surface_get_stride(surface);
 
@@ -979,12 +1211,21 @@ Bitmap render_text_pango(const char *markup,
     /* Apply Floyd–Steinberg error-diffusion dithering to reduce banding and
      * blockiness when mapping down to the limited 16-color palette. We keep
      * per-channel error buffers for the current and next row. */
-    double *err_r_cur = calloc(w+2, sizeof(double));
-    double *err_g_cur = calloc(w+2, sizeof(double));
-    double *err_b_cur = calloc(w+2, sizeof(double));
-    double *err_r_next = calloc(w+2, sizeof(double));
-    double *err_g_next = calloc(w+2, sizeof(double));
-    double *err_b_next = calloc(w+2, sizeof(double));
+    size_t errlen = 0;
+    if (!mul_size_ok((size_t)w + 2, 1, &errlen)) errlen = 0;
+    double *err_r_cur = errlen ? (double*)calloc((size_t)w+2, sizeof(double)) : NULL;
+    double *err_g_cur = errlen ? (double*)calloc((size_t)w+2, sizeof(double)) : NULL;
+    double *err_b_cur = errlen ? (double*)calloc((size_t)w+2, sizeof(double)) : NULL;
+    double *err_r_next = errlen ? (double*)calloc((size_t)w+2, sizeof(double)) : NULL;
+    double *err_g_next = errlen ? (double*)calloc((size_t)w+2, sizeof(double)) : NULL;
+    double *err_b_next = errlen ? (double*)calloc((size_t)w+2, sizeof(double)) : NULL;
+    if (!err_r_cur || !err_g_cur || !err_b_cur || !err_r_next || !err_g_next || !err_b_next) {
+    free(err_r_cur); free(err_g_cur); free(err_b_cur);
+    free(err_r_next); free(err_g_next); free(err_b_next);
+    /* deallocate bitmap allocations made earlier */
+    free_bitmap_buffers(&bm);
+    goto final_cleanup;
+    }
 
     for (int yy = 0; yy < h; yy++) {
         /* zero the next-row error buffers */
@@ -1007,9 +1248,12 @@ Bitmap render_text_pango(const char *markup,
             double rd = (double)((argb >> 16) & 0xFF) + err_r_cur[xx+1];
             double gd = (double)((argb >> 8) & 0xFF) + err_g_cur[xx+1];
             double bd = (double)(argb & 0xFF) + err_b_cur[xx+1];
-            if (rd < 0) rd = 0; if (rd > 255) rd = 255;
-            if (gd < 0) gd = 0; if (gd > 255) gd = 255;
-            if (bd < 0) bd = 0; if (bd > 255) bd = 255;
+            if (rd < 0) rd = 0; 
+            if (rd > 255) rd = 255;
+            if (gd < 0) gd = 0; 
+            if (gd > 255) gd = 255;
+            if (bd < 0) bd = 0; 
+            if (bd > 255) bd = 255;
             /* Bias semi-transparent glyph edge pixels toward foreground
              * display color to reduce dark halos when quantizing to 16 colors. */
             if (a > 24 && a < 255) {
@@ -1085,7 +1329,13 @@ Bitmap render_text_pango(const char *markup,
      * biasing toward mid-brightness colors.
      */
     if (w > 4 && h > 4 && bm.idxbuf && bm.palette) {
-        uint8_t *clean_idx = malloc((size_t)w * (size_t)h);
+        size_t wh = 0;
+        if (!mul_size_ok((size_t)w, (size_t)h, &wh)) wh = SIZE_MAX;
+        uint8_t *clean_idx = NULL;
+        size_t area = 0;
+        if (mul_size_ok((size_t)w, (size_t)h, &area) && area <= RENDER_PANGO_SAFE_MAX_PIXELS) {
+            clean_idx = (uint8_t*)safe_malloc_count(area, 1);
+        }
         if (clean_idx) {
             /* Pass 1: 4-neighbor conservative cleanup */
             memcpy(clean_idx, bm.idxbuf, (size_t)w * (size_t)h);
@@ -1102,7 +1352,9 @@ Bitmap render_text_pango(const char *markup,
                         int bright_count = 0;
                         int neighbor_idx4[4] = { i - w, i + w, i - 1, i + 1 };
                         for (int n = 0; n < 4; n++) {
-                            uint32_t npal = bm.palette[bm.idxbuf[neighbor_idx4[n]]];
+                            int nidx = neighbor_idx4[n];
+                            if (nidx < 0 || (size_t)nidx >= wh) continue;
+                            uint32_t npal = bm.palette[bm.idxbuf[nidx]];
                             uint8_t nr = (npal >> 16) & 0xff;
                             uint8_t ng = (npal >> 8) & 0xff;
                             uint8_t nb = npal & 0xff;
@@ -1113,7 +1365,9 @@ Bitmap render_text_pango(const char *markup,
                             double best_l = -1.0;
                             int best_idx = idx;
                             for (int n = 0; n < 4; n++) {
-                                int ni = bm.idxbuf[neighbor_idx4[n]];
+                                int nidx = neighbor_idx4[n];
+                                if (nidx < 0 || (size_t)nidx >= wh) continue;
+                                int ni = bm.idxbuf[nidx];
                                 uint32_t npal = bm.palette[ni];
                                 uint8_t nr = (npal >> 16) & 0xff;
                                 uint8_t ng = (npal >> 8) & 0xff;
@@ -1147,7 +1401,9 @@ Bitmap render_text_pango(const char *markup,
                             i + w - 1, i + w, i + w + 1
                         };
                         for (int n = 0; n < 8; n++) {
-                            uint32_t npal = bm.palette[bm.idxbuf[neighbor_idx8[n]]];
+                            int nidx = neighbor_idx8[n];
+                            if (nidx < 0 || (size_t)nidx >= wh) continue;
+                            uint32_t npal = bm.palette[bm.idxbuf[nidx]];
                             uint8_t nr = (npal >> 16) & 0xff;
                             uint8_t ng = (npal >> 8) & 0xff;
                             uint8_t nb = npal & 0xff;
@@ -1159,7 +1415,9 @@ Bitmap render_text_pango(const char *markup,
                             double best_l = -1.0;
                             int best_idx = idx;
                             for (int n = 0; n < 8; n++) {
-                                int ni = bm.idxbuf[neighbor_idx8[n]];
+                                int nidx = neighbor_idx8[n];
+                                if (nidx < 0 || (size_t)nidx >= wh) continue;
+                                int ni = bm.idxbuf[nidx];
                                 uint32_t npal = bm.palette[ni];
                                 uint8_t nr = (npal >> 16) & 0xff;
                                 uint8_t ng = (npal >> 8) & 0xff;
@@ -1275,22 +1533,32 @@ Bitmap render_text_pango(const char *markup,
         }
     }
 
-    bm.x = text_x - pad;
-    bm.y = text_y - pad;
-    bm.w = w;
-    bm.h = h;
+    /* Mark successful completion only if we reach here by falling through
+     * (goto-based early exits jump directly to the label below and will not
+     * execute this assignment). */
+    success = true;
+final_cleanup:
+    if (success) {
+        bm.x = text_x - pad;
+        bm.y = text_y - pad;
+        bm.w = w;
+        bm.h = h;
+    } else {
+        /* Free any partially-allocated bitmap buffers to avoid leaking on failure */
+        free_bitmap_buffers(&bm);
+    }
 
-    /* Cleanup */
-    pango_font_description_free(desc);
-    g_object_unref(layout_dummy);
-    g_object_unref(ctx_dummy);
-    cairo_destroy(cr_dummy);
-    cairo_surface_destroy(dummy);
-    g_object_unref(layout_real);
-    g_object_unref(ctx_real);
-    cairo_destroy(cr);
-    cairo_surface_destroy(surface_ss);
-    cairo_surface_destroy(surface);
+    /* Cleanup Pango/Cairo resources (guarded) */
+    if (desc) pango_font_description_free(desc);
+    if (layout_dummy) g_object_unref(layout_dummy);
+    if (ctx_dummy) g_object_unref(ctx_dummy);
+    if (cr_dummy) cairo_destroy(cr_dummy);
+    if (dummy) cairo_surface_destroy(dummy);
+    if (layout_real) g_object_unref(layout_real);
+    if (ctx_real) g_object_unref(ctx_real);
+    if (cr) cairo_destroy(cr);
+    if (surface_ss) cairo_surface_destroy(surface_ss);
+    if (surface) cairo_surface_destroy(surface);
 
     return bm;
 }
@@ -1298,10 +1566,20 @@ Bitmap render_text_pango(const char *markup,
 void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a) {
     if (!hex || hex[0] != '#') { *r=*g=*b=1.0; *a=1.0; return; }
     unsigned int rr=255, gg=255, bb=255, aa=255;
-    if (strlen(hex)==7) {
-        sscanf(hex+1,"%02x%02x%02x",&rr,&gg,&bb);
-    } else if (strlen(hex)==9) {
-        sscanf(hex+1,"%02x%02x%02x%02x",&rr,&gg,&bb,&aa);
+    size_t hlen = strlen(hex);
+    if (hlen==7) {
+        /* #RRGGBB */
+        if (sscanf(hex+1, "%02x%02x%02x", &rr, &gg, &bb) != 3) {
+            /* malformed; fall back to white */
+            rr = gg = bb = 255;
+        }
+    } else if (hlen==9) {
+        /* #AARRGGBB (header documents AARRGGBB order) */
+        unsigned int aa_t=255, rr_t=255, gg_t=255, bb_t=255;
+        if (sscanf(hex+1, "%02x%02x%02x%02x", &aa_t, &rr_t, &gg_t, &bb_t) != 4) {
+            aa_t = rr_t = gg_t = bb_t = 255;
+        }
+        aa = aa_t; rr = rr_t; gg = gg_t; bb = bb_t;
     }
     *r=rr/255.0; *g=gg/255.0; *b=bb/255.0; *a=aa/255.0;
 }

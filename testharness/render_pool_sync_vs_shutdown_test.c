@@ -23,10 +23,12 @@ Bitmap render_text_pango(const char *markup,
     bm.w = w; bm.h = h; bm.nb_colors = 4;
     bm.idxbuf = av_malloc(w * h);
     if (!bm.idxbuf) return bm;
+    bm.idxbuf_len = (size_t)w * (size_t)h;
     for (int i = 0; i < w*h; i++) bm.idxbuf[i] = (uint8_t)(i % bm.nb_colors);
     bm.palette = av_malloc(sizeof(uint32_t) * 16);
     if (!bm.palette) { av_free(bm.idxbuf); bm.idxbuf = NULL; return bm; }
     for (int i = 0; i < 16; i++) bm.palette[i] = 0xff000000 | (i * 0x00101010);
+    bm.palette_bytes = 16 * sizeof(uint32_t);
     /* simulate some work */
     usleep((rand() % 20 + 5) * 1000);
     return bm;

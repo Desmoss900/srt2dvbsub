@@ -72,6 +72,12 @@
 #include "debug_png.h"
 #include "qc.h"
 #include "bench.h"
+#include "mux_write.h"
+
+
+/* Provide a short module name for LOG() */
+#define DEBUG_MODULE "dvdbr2dvbsub"
+#include "debug.h"
 
 typedef struct {
     Bitmap bm;
@@ -197,13 +203,13 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
                                      const char *dbg_png)
 {
     if (!sub) return;
-    if (debug_level > 0) fprintf(stderr, "[dvb] Encoding sub num_rects=%d\n", sub->num_rects);
+    if (debug_level > 0) LOG(1, "Encoding sub num_rects=%d\n", sub->num_rects);
     if (sub->num_rects > 0) {
         AVSubtitleRect *r = sub->rects[0];
-        if (debug_level > 0) fprintf(stderr, "[dvb] rect w=%d h=%d nb_colors=%d\n", r->w, r->h, r->nb_colors);
+        if (debug_level > 0) LOG(1, "rect w=%d h=%d nb_colors=%d\n", r->w, r->h, r->nb_colors);
         if (r->data[1] && debug_level > 0) {
             uint32_t *pal = (uint32_t*)r->data[1];
-            fprintf(stderr, "[dvb] palette 0x%08x 0x%08x 0x%08x 0x%08x\n", pal[0], pal[1], pal[2], pal[3]);
+            LOG(1, "palette 0x%08x 0x%08x 0x%08x 0x%08x\n", pal[0], pal[1], pal[2], pal[3]);
         }
     }
 #if 0
@@ -216,7 +222,7 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
     int64_t t_enc = bench_now();
     int size = avcodec_encode_subtitle(ctx, tmpbuf, SUB_BUF_SIZE, sub);
     if (bench_mode) bench.t_encode_us += bench_now() - t_enc;
-    if (debug_level > 0) fprintf(stderr, "[dvb] avcodec_encode_subtitle returned %d\n", size);
+    if (debug_level > 0) LOG(1, "avcodec_encode_subtitle returned %d\n", size);
     if (size > 0 && debug_level >= 2) {
         int dump = size > 32 ? 32 : size;
         fprintf(stderr, "[dvb-debug] encoded first %d bytes:\n", dump);
@@ -249,21 +255,21 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
         av_packet_rescale_ts(pkt, (AVRational){1,90000}, track->stream->time_base);
 
         int64_t t0 = bench_now();
-        int ret = av_interleaved_write_frame(out_fmt, pkt);
+    int ret = safe_av_interleaved_write_frame(out_fmt, pkt);
         if (debug_level > 0) {
             if (ret < 0) {
                 char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-                fprintf(stderr, "[dvb] av_interleaved_write_frame returned %d (%s)\n", ret, errbuf);
+                LOG(1, "av_interleaved_write_frame returned %d (%s)\n", ret, errbuf);
             } else {
-                fprintf(stderr, "[dvb] av_interleaved_write_frame returned %d (pkt size=%d)\n", ret, pkt->size);
-                if (dbg_png) fprintf(stderr, "[dvb] encoded from PNG: %s\n", dbg_png);
+                LOG(1, "av_interleaved_write_frame returned %d (pkt size=%d)\n", ret, pkt->size);
+                if (dbg_png) LOG(1, "encoded from PNG: %s\n", dbg_png);
             }
         }
         /* Diagnostic: flush and report AVIO position so we can tell if anything hit disk */
         if (ret >= 0 && out_fmt && out_fmt->pb) {
             avio_flush(out_fmt->pb);
             int64_t pos = avio_tell(out_fmt->pb);
-            if (debug_level > 0) fprintf(stderr, "[dvb] after write avio_tell=%lld\n", (long long)pos);
+            if (debug_level > 0) LOG(1, "after write avio_tell=%lld\n", (long long)pos);
         }
         if (bench_mode) {
             bench.t_mux_us += bench_now() - t0;
@@ -727,8 +733,10 @@ int main(int argc, char **argv) {
                                 }
                             }
                             bm.idxbuf = idxbuf;
+                            bm.idxbuf_len = (size_t)bm.w * (size_t)bm.h;
                             bm.palette = palette;
                             bm.nb_colors = nb_colors;
+                            bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                             if (debug_level > 0) {
                         int codec_w = tracks[ti].codec_ctx ? tracks[ti].codec_ctx->width : 0;
                         int codec_h = tracks[ti].codec_ctx ? tracks[ti].codec_ctx->height : 0;
@@ -748,6 +756,7 @@ int main(int argc, char **argv) {
                             // scale already computed above
                             if (scale <= 1) {
                                 bm.idxbuf = av_malloc(r->w * r->h);
+                                bm.idxbuf_len = (size_t)r->w * (size_t)r->h;
                                 uint8_t *dst = bm.idxbuf;
                                 uint8_t *src = (uint8_t*)r->data[0];
                                 int src_stride = r->linesize[0] ? r->linesize[0] : r->w;
@@ -762,9 +771,12 @@ int main(int argc, char **argv) {
                                     bm.nb_colors = palette_entries;
                                     bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
                                     memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
+                                    bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                                 } else {
                                     bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
                                     bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
+                                    /* record length of allocated palette so callers can validate copies */
+                                    bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                                 }
                                 bm.w = r->w;
                                 bm.h = r->h;
@@ -786,6 +798,7 @@ int main(int argc, char **argv) {
                                 if (!dst_idx) {
                                     // fallback: copy as-is
                                     bm.idxbuf = av_malloc(r->w * r->h);
+                                    bm.idxbuf_len = (size_t)r->w * (size_t)r->h;
                                     uint8_t *dst2 = bm.idxbuf;
                                     uint8_t *src2 = (uint8_t*)r->data[0];
                                     int src_stride2 = r->linesize[0] ? r->linesize[0] : r->w;
@@ -800,6 +813,7 @@ int main(int argc, char **argv) {
                                         bm.nb_colors = palette_entries;
                                         bm.palette = av_malloc(bm.nb_colors * sizeof(uint32_t));
                                         memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
+                                        bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                                     } else {
                                         bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
                                         bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
@@ -810,12 +824,14 @@ int main(int argc, char **argv) {
                                     bm.y = r->y;
                                 } else {
                                     bm.idxbuf = dst_idx;
+                                    bm.idxbuf_len = (size_t)dst_w * (size_t)dst_h;
                                     if (r->data[1]) {
                                         int palette_entries = r->nb_colors ? r->nb_colors : (r->linesize[1] ? (r->linesize[1] / 4) : 16);
                                         if (palette_entries <= 0) palette_entries = 16;
                                         bm.nb_colors = palette_entries;
                                         bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
                                         memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
+                                        bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                                     } else {
                                         bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
                                         bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
@@ -907,8 +923,7 @@ int main(int argc, char **argv) {
                         fflush(stdout);
                     }
                     /* free encoded subtitle internal buffers then the struct */
-                    avsubtitle_free(dvb_sub);
-                    av_free(dvb_sub);
+                    free_subtitle(&dvb_sub);
                     /* free temporary bitmap buffers we allocated during conversion */
                     if (bm.idxbuf) av_free(bm.idxbuf);
                     if (bm.palette) av_free(bm.palette);
@@ -963,7 +978,7 @@ int main(int argc, char **argv) {
                     uint8_t *idxbuf;
                     uint32_t *palette;
                     int nb_colors;
-                    int scale = 1;
+                    scale = 1;
                     if (tracks[ti].codec_ctx && tracks[ti].codec_ctx->width >= 3840 && r->w <= 1920)
                         scale = tracks[ti].codec_ctx->width / r->w;
                     if (scale <= 1) {
@@ -992,8 +1007,10 @@ int main(int argc, char **argv) {
                         }
                     }
                     bm.idxbuf = idxbuf;
+                    bm.idxbuf_len = (size_t)bm.w * (size_t)bm.h;
                     bm.palette = palette;
                         bm.nb_colors = nb_colors;
+                    bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                     if (debug_level > 0) {
             int codec_w = tracks[ti].codec_ctx ? tracks[ti].codec_ctx->width : 0;
             int codec_h = tracks[ti].codec_ctx ? tracks[ti].codec_ctx->height : 0;
@@ -1001,11 +1018,12 @@ int main(int argc, char **argv) {
                 ti, orig_x, orig_y, orig_w, orig_h, src_image_w, scale, bm.x, bm.y, bm.w, bm.h, codec_w, codec_h);
                     }
                 } else {
-                    int scale = 1;
+                    scale = 1;
                     if (tracks[ti].codec_ctx && tracks[ti].codec_ctx->width >= 3840 && r->w <= 1920)
                         scale = tracks[ti].codec_ctx->width / r->w;
                     if (scale <= 1) {
                         bm.idxbuf = av_malloc(r->w * r->h);
+                        bm.idxbuf_len = (size_t)r->w * (size_t)r->h;
                         uint8_t *dst = bm.idxbuf;
                         uint8_t *src = (uint8_t*)r->data[0];
                         int src_stride = r->linesize[0] ? r->linesize[0] : r->w;
@@ -1015,19 +1033,22 @@ int main(int argc, char **argv) {
                             src += src_stride;
                         }
                         if (r->data[1]) {
-                            int palette_entries = r->nb_colors ? r->nb_colors : (r->linesize[1] ? (r->linesize[1] / 4) : 16);
-                            if (palette_entries <= 0) palette_entries = 16;
-                            bm.nb_colors = palette_entries;
-                            bm.palette = av_malloc(bm.nb_colors * sizeof(uint32_t));
-                            memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
-                            // Clamp indices to valid range
-                            for (int i = 0; i < r->w * r->h; i++) {
-                                if (bm.idxbuf[i] >= bm.nb_colors) bm.idxbuf[i] = 0;
+                                int palette_entries = r->nb_colors ? r->nb_colors : (r->linesize[1] ? (r->linesize[1] / 4) : 16);
+                                if (palette_entries <= 0) palette_entries = 16;
+                                bm.nb_colors = palette_entries;
+                                bm.palette = av_malloc(bm.nb_colors * sizeof(uint32_t));
+                                memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
+                                bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
+                                // Clamp indices to valid range
+                                for (int i = 0; i < r->w * r->h; i++) {
+                                    if (bm.idxbuf[i] >= bm.nb_colors) bm.idxbuf[i] = 0;
+                                }
+                            } else {
+                                bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
+                                bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
+                                /* record allocated palette length for later validation */
+                                bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                             }
-                        } else {
-                            bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
-                            bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
-                        }
                         bm.w = r->w;
                         bm.h = r->h;
                         bm.x = r->x;
@@ -1047,6 +1068,7 @@ int main(int argc, char **argv) {
                         av_free(src_idx);
                         if (!dst_idx) {
                             bm.idxbuf = av_malloc(r->w * r->h);
+                            bm.idxbuf_len = (size_t)r->w * (size_t)r->h;
                             uint8_t *dst2 = bm.idxbuf;
                             uint8_t *src2 = (uint8_t*)r->data[0];
                             int src_stride2 = r->linesize[0] ? r->linesize[0] : r->w;
@@ -1061,23 +1083,28 @@ int main(int argc, char **argv) {
                                 bm.nb_colors = palette_entries;
                                 bm.palette = av_malloc(bm.nb_colors * sizeof(uint32_t));
                                 memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
+                                bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                                 for (int i = 0; i < r->w * r->h; i++) if (bm.idxbuf[i] >= bm.nb_colors) bm.idxbuf[i] = 0;
                             } else {
                                 bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
                                 bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
+                                /* ensure palette_bytes is recorded for zeroed palette */
+                                bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                             }
                             bm.w = r->w;
                             bm.h = r->h;
                             bm.x = r->x;
                             bm.y = r->y;
                         } else {
-                            bm.idxbuf = dst_idx;
+                                bm.idxbuf = dst_idx;
+                                bm.idxbuf_len = (size_t)dst_w * (size_t)dst_h;
                             if (r->data[1]) {
                                 int palette_entries = r->nb_colors ? r->nb_colors : (r->linesize[1] ? (r->linesize[1] / 4) : 16);
                                 if (palette_entries <= 0) palette_entries = 16;
                                 bm.nb_colors = palette_entries;
                                 bm.palette = av_malloc(bm.nb_colors * sizeof(uint32_t));
                                 memcpy(bm.palette, r->data[1], bm.nb_colors * sizeof(uint32_t));
+                                bm.palette_bytes = (size_t)bm.nb_colors * sizeof(uint32_t);
                             } else {
                                 bm.nb_colors = r->nb_colors ? r->nb_colors : 16;
                                 bm.palette = av_mallocz(bm.nb_colors * sizeof(uint32_t));
@@ -1115,8 +1142,7 @@ int main(int argc, char **argv) {
                 }
                 pts90 += (tracks[ti].effective_delay_ms * 90);
             encode_and_write_subtitle(tracks[ti].codec_ctx, out_fmt, &tracks[ti], dvb_sub, pts90, bench_mode, NULL);
-            avsubtitle_free(dvb_sub);
-            av_free(dvb_sub);
+            free_subtitle(&dvb_sub);
             if (bm.idxbuf) av_free(bm.idxbuf);
             if (bm.palette) av_free(bm.palette);
             avsubtitle_free(&flush_sub);
