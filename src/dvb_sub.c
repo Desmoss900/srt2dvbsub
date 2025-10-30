@@ -47,10 +47,88 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "dvb_sub.h"
+#include "alloc_utils.h"
+#include "pool_alloc.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <limits.h>
 #include <libavutil/mem.h>
+
+
+/*
+ * AUDIT CORRECTION SUMMARY
+ * ------------------------
+ * The following issues were found and fixed in this file as part of
+ * a robustness and safety audit:
+ *  - Replaced unsafe integer/size arithmetic with size_t checks to
+ *    avoid overflow when allocating index and palette buffers.
+ *  - Added `safe_av_mallocz_array()` helper to centralize overflow
+ *    checks and to provide a portable fallback when av_mallocz_array
+ *    isn't available.
+ *  - Hardened palette handling: clamped nb_colors to encoder limits
+ *    and avoided memcpy(NULL,...) by checking allocations before copy.
+ *  - Improved cleanup paths: prefer av_freep() to clear pointers and
+ *    avoid double-free/partial-free hazards.
+ *  - Added informative debug logging on allocation failures using the
+ *    global `debug_level`.
+ *  - Clamped durations to avoid unsigned wrap when converting to
+ *    `unsigned` end_display_time.
+ *
+ * Remaining recommendations (see docs/dvb_sub_optimization.txt):
+ *  - Normalize free-style across all branches (completed here);
+ *  - Consider exposing buffer lengths/strides on Bitmap to validate
+ *    memcpy sizes;
+ *  - Optionally centralize allocation/free helpers in a common util.
+ */
+
+/* Provide a short module name used by LOG() in debug.h */
+#define DEBUG_MODULE "dvb_sub"
+#include "debug.h"
+
+/*
+ * free_sub_and_rects
+ * ------------------
+ * Helper to release a partially-constructed AVSubtitle that may have
+ * an allocated rect and/or data planes. This centralizes cleanup so
+ * callers don't repeat the av_freep chains and risk forgetting a
+ * field. The function is safe to call with a NULL pointer.
+ */
+static void free_sub_and_rects(AVSubtitle *sub) {
+    if (!sub) return;
+    if (sub->rects) {
+        if (sub->rects[0]) {
+            AVSubtitleRect *r = sub->rects[0];
+            /* free palette then index plane if present via pool_free */
+            if (r->data[1]) {
+                size_t pbytes = (size_t)r->linesize[1];
+                if (pbytes == 0) pbytes = (size_t)r->nb_colors * 4u;
+                pool_free(r->data[1], pbytes);
+                r->data[1] = NULL;
+            }
+            if (r->data[0]) {
+                size_t pix = (size_t)r->w * (size_t)r->h;
+                pool_free(r->data[0], pix);
+                r->data[0] = NULL;
+            }
+            av_freep(&sub->rects[0]);
+        }
+        av_freep(&sub->rects);
+    }
+    av_freep(&sub);
+}
+
+/*
+ * free_subtitle
+ * --------------
+ * Public wrapper (file-local) to free a heap-allocated AVSubtitle
+ * and NULL the caller's pointer. See dvb_sub.h for usage notes.
+ */
+void free_subtitle(AVSubtitle **psub) {
+    if (!psub || !*psub) return;
+    avsubtitle_free(*psub);
+    av_freep(psub);
+}
 
 /*
  * make_subtitle
@@ -87,24 +165,30 @@ AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms) {
      * AVSubtitle to keep the call-site logic uniform.
      */
     if (bm.w <= 0 || bm.h <= 0 || !bm.idxbuf) {
-        extern int debug_level;
-        if (debug_level > 3) {
-            fprintf(stderr,
-                "[dvb_sub] Empty bitmap passed: w=%d h=%d idxbuf=%p\n",
-                bm.w, bm.h, (void*)bm.idxbuf);
-        }
+        LOG(4, "Empty bitmap passed: w=%d h=%d idxbuf=%p\n", bm.w, bm.h, (void*)bm.idxbuf);
 
         sub->num_rects = 0;
         sub->rects = NULL;
-        sub->start_display_time = 0;
-        /* end_display_time is the duration in ms (end - start) */
-        sub->end_display_time   = (unsigned)(end_ms - start_ms);
 
-        if (debug_level > 3) {
-            fprintf(stderr,
-                "[dvb_sub] Built subtitle: rect=%dx%d at (%d,%d), duration=%u ms\n",
-                bm.w, bm.h, bm.x, bm.y, sub->end_display_time);
+        /* start_display_time is intentionally left at 0. The calling
+         * code in the pipeline treats the rect's timing as a duration
+         * (end_display_time) and applies absolute timing elsewhere.
+         * If you need non-zero start offsets inside the AVSubtitle, set
+         * start_display_time appropriately where the subtitle is built.
+         */
+        sub->start_display_time = 0;
+
+        /* end_display_time is the duration in ms (end - start). Clamp
+         * negative durations to zero and cap to UINT_MAX to avoid unsigned
+         * wrap. */
+        {
+            int64_t dur = end_ms - start_ms;
+            if (dur < 0) dur = 0;
+            if (dur > (int64_t)UINT_MAX) dur = (int64_t)UINT_MAX;
+            sub->end_display_time = (unsigned)dur;
         }
+
+        LOG(4, "Built subtitle: rect=%dx%d at (%d,%d), duration=%u ms\n", bm.w, bm.h, bm.x, bm.y, sub->end_display_time);
         return sub;
     }
 
@@ -114,8 +198,13 @@ AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms) {
      * av_mallocz so callers can uniformly free with avsubtitle_free.
      */
     sub->num_rects = 1;
-    sub->rects = av_mallocz(sizeof(AVSubtitleRect*));
-    if (!sub->rects) { av_free(sub); return NULL; }
+    /* Allocate the rects array with overflow protection. */
+    sub->rects = safe_av_mallocz_array((size_t)sub->num_rects, sizeof(*sub->rects));
+    if (!sub->rects) {
+        LOG(1, "allocation failed: rects array (%zu x %zu)\n", (size_t)sub->num_rects, sizeof(*sub->rects));
+        av_freep(&sub);
+        return NULL;
+    }
 
     /*
      * Allocates memory for the first subtitle rectangle in the 'rects' array of the 'sub' structure.
@@ -125,8 +214,9 @@ AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms) {
     sub->rects[0] = av_mallocz(sizeof(AVSubtitleRect));
 
     if (!sub->rects[0]) {
-        av_free(sub->rects);
-        av_free(sub);
+        LOG(1, "allocation failed: rect[0] (%zu bytes)\n", sizeof(AVSubtitleRect));
+        av_freep(&sub->rects);
+        av_freep(&sub);
         return NULL;
     }
 
@@ -138,39 +228,88 @@ AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms) {
     r->w = bm.w;
     r->h = bm.h;
 
-    /* Number of colors: prefer bm.nb_colors when present, otherwise 16. */
-    r->nb_colors = bm.nb_colors > 0 ? bm.nb_colors : 16;
+    /* Number of colors: prefer bm.nb_colors when present, otherwise 16.
+     * Clamp to the encoder's maximum (AVPALETTE_SIZE / 4 entries). */
+    {
+        const int default_colors = 16;
+        const int max_colors = (int)(AVPALETTE_SIZE / 4u);
+        int nb = bm.nb_colors > 0 ? bm.nb_colors : default_colors;
+        if (nb > max_colors) nb = max_colors;
+        r->nb_colors = nb;
+    }
     r->type = SUBTITLE_BITMAP;
 
-    /*
-     * Index plane: allocate one byte per pixel and copy the index buffer
-     * (palette indices 0..nb_colors-1). The encoder expects a packed
-     * index plane where linesize equals width for simple bitmaps.
+    /* Safely compute pixel count and allocate the index plane. Use
+     * size_t arithmetic to avoid signed-int overflow if bm.w or bm.h
+     * are large or negative. The empty-bitmap case (bm.w<=0/bm.h<=0
+     * or missing idxbuf) is handled earlier and returns a zero-rect
+     * AVSubtitle; therefore we don't re-check dimensions here.
      */
-    r->data[0] = av_mallocz(bm.w * bm.h);
-    r->linesize[0] = bm.w;
-    if (!r->data[0]) {
-        av_free(r);
-        av_free(sub->rects);
-        av_free(sub);
+    size_t pixel_count = (size_t)bm.w * (size_t)bm.h;
+    /* Defensive check: ensure multiplication didn't wrap (shouldn't on
+     * platforms where size_t is wide enough, but keep the check). */
+    if (pixel_count / (size_t)bm.w != (size_t)bm.h) {
+        /* normalize cleanup to central helper */
+        free_sub_and_rects(sub);
         return NULL;
     }
-    memcpy(r->data[0], bm.idxbuf, bm.w * bm.h);
+    /* allocate (zeroed) index plane via pool */
+    r->data[0] = pool_alloc(pixel_count);
+    /* Clamp linesize to INT_MAX to avoid narrowing when casting to int. */
+    r->linesize[0] = (bm.w > INT_MAX) ? INT_MAX : bm.w;
+    if (!r->data[0]) {
+        LOG(1, "allocation failed: index plane (%zu bytes)\n", pixel_count);
+        free_sub_and_rects(sub);
+        return NULL;
+    }
+    /* Validate caller-provided idx buffer length when available. If the
+     * Bitmap carries an idxbuf_len we require it to be at least the
+     * expected pixel_count; otherwise treat it as an error to avoid
+     * potential OOB reads. */
+    if (bm.idxbuf_len == 0 || bm.idxbuf_len < pixel_count) {
+        LOG(1, "idxbuf too small or missing: have=%zu need=%zu\n", bm.idxbuf_len, pixel_count);
+        free_sub_and_rects(sub);
+        return NULL;
+    }
+    memcpy(r->data[0], bm.idxbuf, pixel_count);
 
     /*
      * Palette plane: allocate up to AVPALETTE_SIZE bytes and copy the
-     * 32-bit ARGB palette entries. Clamp to the encoder's maximum.
-     */
-    int palette_bytes = FFMIN(r->nb_colors * 4, AVPALETTE_SIZE);
-    r->data[1] = av_mallocz(palette_bytes);
-    r->linesize[1] = palette_bytes;
-    if (bm.palette) {
-        memcpy(r->data[1], bm.palette, palette_bytes);
+     * 32-bit ARGB palette entries. Use size_t arithmetic and check for
+     * allocation failure before copying to avoid memcpy(NULL,...). */
+    size_t palette_bytes = (size_t)r->nb_colors * 4u;
+    if (palette_bytes > (size_t)AVPALETTE_SIZE) palette_bytes = (size_t)AVPALETTE_SIZE;
+    if (palette_bytes > 0) {
+        r->data[1] = pool_alloc(palette_bytes);
+        /* linesize holds the byte count for the palette plane */
+        r->linesize[1] = (int) (palette_bytes > (size_t)INT_MAX ? INT_MAX : (int)palette_bytes);
+        if (!r->data[1]) {
+            LOG(1, "allocation failed: palette (%zu bytes)\n", palette_bytes);
+            free_sub_and_rects(sub);
+            return NULL;
+        }
+        if (bm.palette) {
+            if (bm.palette_bytes < palette_bytes) {
+                LOG(1, "palette too small: have=%zu need=%zu\n", bm.palette_bytes, palette_bytes);
+                free_sub_and_rects(sub);
+                return NULL;
+            }
+            memcpy(r->data[1], bm.palette, palette_bytes);
+        }
+    } else {
+        r->data[1] = NULL;
+        r->linesize[1] = 0;
     }
 
-    /* Set display timing (end_display_time is a duration in ms). */
+    /* Set display timing (end_display_time is a duration in ms). Clamp
+     * negative durations to zero and cap to UINT_MAX to avoid unsigned
+     * wrap or truncation. start_display_time is left as 0 (relative
+     * display start) per existing behavior. */
     sub->start_display_time = 0;
-    sub->end_display_time   = (unsigned)(end_ms - start_ms);
+    int64_t dur = end_ms - start_ms;
+    if (dur < 0) dur = 0;
+    if (dur > (int64_t)UINT_MAX) dur = (int64_t)UINT_MAX;
+    sub->end_display_time = (unsigned)dur;
 
     return sub;
 }

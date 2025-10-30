@@ -88,4 +88,24 @@
  */
 AVSubtitle* make_subtitle(Bitmap bm, int64_t start_ms, int64_t end_ms);
 
+/**
+ * free_subtitle
+ * 
+ * @brief Frees the memory allocated for an AVSubtitle structure.
+ * 
+ * Convenience wrapper that releases an allocated AVSubtitle and
+ * frees the structure itself. It performs the equivalent of:
+ *   avsubtitle_free(*psub);
+ *   av_freep(psub);
+ *
+ * Note: only use this for heap-allocated AVSubtitle pointers returned
+ * by `make_subtitle()` (or otherwise allocated with av_malloc/av_mallocz).
+ * Do NOT call this with the address of a stack-allocated AVSubtitle
+ * (e.g., `AVSubtitle flush_sub; free_subtitle(&flush_sub);` would be
+ * invalid). For stack-allocated objects continue to use `avsubtitle_free(&s)`.
+ *
+ * @param psub Pointer to a pointer to an AVSubtitle structure to be freed.
+ */
+void free_subtitle(AVSubtitle **psub);
+
 #endif

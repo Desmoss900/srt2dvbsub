@@ -59,8 +59,14 @@
 #include <string.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/avutil.h>
+#include <libavutil/mem.h>
 #include "subtrack.h"
 #include "bench.h"
+#include "mux_write.h"
+/* Provide a short module name for LOG() */
+#define DEBUG_MODULE "muxsub"
+#include "debug.h"
 
 /* srt2dvbsub.c defines the global debug_level; declare it here. */
 extern int debug_level;
@@ -69,6 +75,10 @@ extern int debug_level;
  * chosen to be large enough for typical DVB/teletext encoded subtitle data
  * but not excessively large. */
 #define SUB_BUF_SIZE 65536
+/* Maximum buffer size we'll grow to automatically (1 MiB). */
+#define MAX_SUB_BUF_SIZE (1<<20)
+/* Number of times the encoder must fill the buffer before we auto-grow. */
+#define FULL_COUNT_THRESHOLD 2
 
 /*
 * encode_and_write_subtitle
@@ -101,15 +111,36 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      */
     if (!sub) {
         if (debug_level > 2) {
-            fprintf(stderr, "Skipping empty/bad subtitle event\n");
+            LOG(3, "Skipping empty/bad subtitle event\n");
         }
         return;
     }
 
-    /* Allocate temporary buffer for encoder output. Freed on all paths. */
-    uint8_t *tmpbuf = av_malloc(SUB_BUF_SIZE);
-    if (!tmpbuf)
-        return; /* out of memory: nothing we can do here */
+    /* Defensive input validation: ensure required pointers are present
+     * before allocating temporary buffers or dereferencing fields. */
+    if (!ctx || !out_fmt) {
+        LOG(1, "Null encoder context or output format context\n");
+        return;
+    }
+    if (!track || !track->stream) {
+        LOG(1, "Null track or stream pointer\n");
+        return;
+    }
+
+    /* Lazily allocate and reuse a per-track temporary buffer to avoid
+     * repeated av_malloc/av_free churn on every subtitle encode. The
+     * buffer is intentionally kept for the process lifetime. */
+    uint8_t *tmpbuf = track->enc_tmpbuf;
+    if (!tmpbuf) {
+        size_t alloc_size = track->enc_tmpbuf_size ? track->enc_tmpbuf_size : SUB_BUF_SIZE;
+        track->enc_tmpbuf = av_malloc(alloc_size);
+        if (!track->enc_tmpbuf) {
+            LOG(1, "out of memory: cannot allocate per-track encode buffer\n");
+            return;
+        }
+        track->enc_tmpbuf_size = alloc_size;
+        tmpbuf = track->enc_tmpbuf;
+    }
 
     /* Encode and optionally measure encode time for bench stats. */
     int64_t t_enc = bench_now();
@@ -121,20 +152,54 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      * The logged value 'size' typically represents the result of the subtitle encoding operation.
      */
     if (debug_level > 0)
-        fprintf(stderr, "[muxsub] avcodec_encode_subtitle returned %d\n", size);
+        LOG(1, "avcodec_encode_subtitle returned %d\n", size);
 
     /*
      * If benchmarking mode is enabled, accumulate the time taken for encoding
      * by adding the elapsed time (current time minus start time) to the
      * total encoding time counter.
      */
-    if (bench_mode)
-        bench.t_encode_us += bench_now() - t_enc;
+    if (bench_mode) {
+        bench_add_encode_us(bench_now() - t_enc);
+    }
 
-    /* If encoder produced no bytes, free the buffer and return. */
+    /* If encoder produced no bytes, return. The per-track buffer is
+     * intentionally retained for reuse and must not be freed here. Log
+     * at debug level so callers can diagnose unexpected empty output. */
     if (size <= 0) {
-        av_free(tmpbuf);
+        LOG(2, "encoder produced no bytes (size=%d) [stream=%d pts=%lld]\n",
+            size, track->stream->index, (long long)pts90);
         return;
+    }
+
+    if (bench_mode)
+        bench_inc_cues_encoded();
+
+    /* If the encoder returned exactly the provided buffer size there is a
+     * risk the output was truncated. Log this at debug level to help tune
+     * SUB_BUF_SIZE if necessary. */
+    if ((size_t)size >= track->enc_tmpbuf_size) {
+        /* Encoder filled the buffer (or reported equal): increment counter
+         * and consider growing the buffer after a few occurrences. */
+        track->enc_tmpbuf_full_count++;
+        LOG(2, "encoder filled buffer (%zu bytes) [stream=%d pts=%lld] count=%d\n",
+            track->enc_tmpbuf_size, track->stream->index, (long long)pts90, track->enc_tmpbuf_full_count);
+        if (track->enc_tmpbuf_full_count >= FULL_COUNT_THRESHOLD && track->enc_tmpbuf_size < MAX_SUB_BUF_SIZE) {
+            size_t new_size = track->enc_tmpbuf_size * 2;
+            if (new_size > MAX_SUB_BUF_SIZE) new_size = MAX_SUB_BUF_SIZE;
+            uint8_t *newbuf = av_realloc(track->enc_tmpbuf, new_size);
+            if (newbuf) {
+                track->enc_tmpbuf = newbuf;
+                track->enc_tmpbuf_size = new_size;
+                LOG(1, "increased per-track encode buffer to %zu bytes for stream %d\n", new_size, track->stream->index);
+            } else {
+                LOG(1, "failed to grow per-track encode buffer to %zu bytes for stream %d\n", new_size, track->stream->index);
+            }
+            track->enc_tmpbuf_full_count = 0;
+        }
+    } else {
+        /* Reset counter when output fits comfortably. */
+        track->enc_tmpbuf_full_count = 0;
     }
     
     /**
@@ -153,7 +218,7 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      * This prevents further processing when there is no valid packet and ensures proper memory cleanup.
      */
     if (!pkt) {
-        av_free(tmpbuf);
+        LOG(1, "av_packet_alloc failed [stream=%d pts=%lld]\n", track->stream->index, (long long)pts90);
         return;
     }
 
@@ -162,8 +227,12 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      * If allocation fails (av_new_packet returns a negative value), 
      * frees the temporary buffer and the packet, then returns early.
      */
-    if (av_new_packet(pkt, size) < 0) {
-        av_free(tmpbuf);
+    int ret_new = av_new_packet(pkt, size);
+    if (ret_new < 0) {
+        char errbuf[128];
+        av_strerror(ret_new, errbuf, sizeof(errbuf));
+        LOG(1, "av_new_packet failed: %d (%s) [stream=%d pts=%lld]\n",
+            ret_new, errbuf, track->stream->index, (long long)pts90);
         av_packet_free(&pkt);
         return;
     }
@@ -174,28 +243,30 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      */
     memcpy(pkt->data, tmpbuf, size);
     
-    /**
-     * Frees the memory allocated for the buffer pointed to by tmpbuf.
-     * Uses the FFmpeg av_free() function to safely deallocate memory.
-     * Ensure that tmpbuf was previously allocated with av_malloc() or similar.
-     */
-    av_free(tmpbuf);
-
     /* Attach packet to the track's stream; caller must ensure track->stream. */
     pkt->stream_index = track->stream->index;
 
-    /* Enforce per-track monotonic PTS/DTS; bump by 90 ticks (1ms) if needed. */
+    /* Enforce per-track monotonic PTS/DTS in our internal 90kHz timeline;
+     * bump by 90 ticks (1ms) if needed. We keep `track->last_pts` in the
+     * same 90kHz units used throughout the code so comparisons are simple.
+     */
     if (track->last_pts != AV_NOPTS_VALUE && pts90 <= track->last_pts) {
         pts90 = track->last_pts + 90; /* bump 1ms forward */
     }
-    
-    /*
-     * Set the presentation timestamp (PTS) and decoding timestamp (DTS) of the packet to the value of pts90.
-     * Also update the track's last_pts to pts90 to keep track of the most recent timestamp.
-     */
-    pkt->pts = pts90;
-    pkt->dts = pts90;
     track->last_pts = pts90;
+
+    /* Convert internal 90kHz PTS to the stream's timebase expected by
+     * libavformat. By convention we create subtitle streams with a
+     * time_base of {1,90000} so this will be a noop; however being
+     * explicit here makes the code resilient if the stream time_base
+     * changes for any reason. */
+    AVRational tb_90k = (AVRational){1, 90000};
+    int64_t pkt_pts = pts90;
+    if (track->stream && (track->stream->time_base.num != 1 || track->stream->time_base.den != 90000)) {
+        pkt_pts = av_rescale_q(pts90, tb_90k, track->stream->time_base);
+    }
+    pkt->pts = pkt_pts;
+    pkt->dts = pkt_pts;
 
     /* Mux/write the packet and update bench counters / logging. */
     int64_t t0 = bench_now();
@@ -211,7 +282,7 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      * The function ensures proper interleaving of audio/video/subtitle streams
      * when writing to the output file.
      */
-    int ret = av_interleaved_write_frame(out_fmt, pkt);
+    int ret = safe_av_interleaved_write_frame(out_fmt, pkt);
     
     /**
      * Logs the result of av_interleaved_write_frame if debugging is enabled.
@@ -226,10 +297,12 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
         if (ret < 0) {
             char errbuf[128];
             av_strerror(ret, errbuf, sizeof(errbuf));
-            fprintf(stderr, "[dvb] av_interleaved_write_frame returned %d (%s)\n", ret, errbuf);
+            LOG(1, "av_interleaved_write_frame returned %d (%s) [stream=%d pts=%lld]\n",
+                ret, errbuf, pkt->stream_index, (long long)pkt->pts);
         } else {
             if (dbg_png)
-                fprintf(stderr, "[dvb] encoded from PNG: %s\n", dbg_png);
+                LOG(1, "encoded from PNG: %s [stream=%d pts=%lld]\n",
+                    dbg_png, pkt->stream_index, (long long)pkt->pts);
         }
     }
     
@@ -240,9 +313,13 @@ void encode_and_write_subtitle(AVCodecContext *ctx,
      * - Increment the count of muxed packets (bench.packets_muxed).
      */
     if (bench_mode) {
-        bench.t_mux_us += bench_now() - t0;
-        bench.cues_encoded++;
-        bench.packets_muxed++;
+        int64_t delta_mux = bench_now() - t0;
+        bench_add_mux_us(delta_mux);
+        bench_add_mux_sub_us(delta_mux);
+        if (ret >= 0) {
+            bench_inc_packets_muxed();
+            bench_inc_packets_muxed_sub();
+        }
     }
 
     /**

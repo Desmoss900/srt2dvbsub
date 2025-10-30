@@ -1,0 +1,31 @@
+# srt2dvbsub Audit To-Do
+
+- [x] 1. CLI parsing / string ownership – audit strdup/frees (completed)
+- [x] 2. Input validation – tighten path length checks and related guards (completed)
+- [x] 3. Error handling & exit consistency – unify error reporting/cleanup paths (completed)
+- [x] 4. Standardize logging – replace ad-hoc printf/fprintf with LOG where appropriate (completed)
+- [x] 5. Off-by-one and integer cast review – verify index and size_t arithmetic (completed)
+- [x] 6. Allocation failure handling – ensure every malloc/calloc/strdup has NULL checks (completed)
+- [x] 7. AV/libav resource cleanup – confirm partial init teardown paths are leak-free (completed)
+- [x] 8. QC log file handling – guarantee fopen/fclose symmetry on all paths (completed)
+- [x] 9. Track strdup ownership – ensure early returns free partially initialised track data (completed)
+- [x] 10. Signal handling review – confirm no unsafe operations within handlers (completed)
+- [x] 11. CLI help/version output harmonisation (completed)
+- [x] 12. Bench counter validation – audit bench struct updates and overflow guards (completed)
+- [ ] 13. Thread pool shutdown robustness – ensure graceful teardown on errors
+- [ ] 14. Progress reporting polish – avoid flicker and respect debug verbosity
+- [ ] 15. Subtitle delay parsing resilience – better error messages / validation
+- [ ] 16. Language list tokenisation improvements – handle whitespace / duplicates
+- [ ] 17. Rendering parameter validation – sanity check font sizes and colours
+- [ ] 18. PNG debug path management – configurable location & error handling
+- [ ] 19. ASS/libass lifecycle – verify renderer setup/teardown with failures
+- [ ] 20. Render pool configuration – guard against oversubscription
+- [ ] 21. Benchmark reporting CLI options – provide user feedback on completion
+- [ ] 22. Dithering and palette tuning – review colour quantisation correctness
+- [ ] 23. Subtitle packet timing verification – ensure PTS monotonicity & delays
+- [ ] 24. Demux/mux loop resilience – handle unexpected stream packets gracefully
+- [ ] 25. Thread pool queue size tuning – consider bounding pending render jobs
+- [ ] 26. String operation efficiency – minimise repeated tokenisation/strdup
+- [ ] 27. Profiling hooks – integrate bench sampling for performance analysis
+- [ ] 28. Feature macro audit – double-check portability guards (_POSIX_C_SOURCE etc.)
+- [ ] 29. Build system / pkg-config hygiene – ensure optional deps handled cleanly

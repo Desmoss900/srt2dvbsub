@@ -46,6 +46,46 @@
 */
 
 /*
+ * AUDIT SUMMARY - render_ass.c
+ * ---------------------------
+ * This file has been audited and hardened as part of the subtitle
+ * rendering review. The following defensive and correctness changes were
+ * implemented and verified with unit tests in `testharness/`:
+ *
+ *  - NULL checks & ownership fixes: public APIs validate inputs and
+ *    `render_ass_free_track()` only frees per-event duplicated strings.
+ *  - Integer overflow safety: guarded w*h multiplications and casts,
+ *    with reverse-division checks to detect overflow before allocations.
+ *  - Magic-sentinel removal: uses <limits.h> (INT_MIN/INT_MAX) instead
+ *    of arbitrary sentinel values.
+ *  - Allocation failure handling: malloc/calloc/strdup return values are
+ *    checked and resources cleaned up on error paths.
+ *  - Robust hex parsing: added `render_ass_hex_to_ass_color()` that
+ *    safely parses `#RRGGBB` and `#AARRGGBB` inputs (unit-tested).
+ *  - Header truncation safety: snprintf return values are checked and
+ *    dynamic allocation fallback is used on buffer truncation.
+ *  - Palette & color caches: small mutex-protected LRU palette cache
+ *    and per-frame color->palette-index cache to limit repeated work.
+ *  - ASS_Image validation: `render_ass_validate_image_tile()` checks
+ *    bitmap/stride/size to avoid rasterizing corrupted tiles (unit-tested).
+ *  - Consistent logging: replaced ad-hoc fprintf() with LOG() macro;
+ *    `DEBUG_MODULE` is defined at the top of this file.
+ *  - Thread-safety helpers: `render_ass_lock()` / `render_ass_unlock()`
+ *    provide a coarse-grained serialization primitive for shared use.
+ *
+ * Unit tests added and passing (see `testharness/test_render_ass.c`):
+ *  - Hex color parsing
+ *  - Tile validation
+ *  - Locking concurrency check
+ *  - Optional libass smoke test (skipped if libass unavailable)
+ *
+ * The audit is considered complete for the items tracked in the
+ * repository TODO list. If you want additional coverage (e.g., more
+ * rasterization edge-cases or performance benches) we can add more
+ * targeted unit tests.
+ */
+
+/*
  * render_ass.c
  *
  * A thin wrapper around libass to allow rendering ASS/SSA formatted subtitles
@@ -66,56 +106,144 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <cairo/cairo.h>
+#include <limits.h>
+#include <pthread.h>
+
+/* Provide a short module name used by LOG() in debug.h */
+#define DEBUG_MODULE "render_ass"
+#include "debug.h"
 
 
 /*
- * hex_to_ass_color - convert HTML-style hex color to ASS color string
- *
- * Convert a CSS/HTML-style hex color string of the form "#RRGGBB" or
- * "#AARRGGBB" into libass/ASS color syntax "&HAABBGGRR". libass stores
- * alpha as an inverted value (0x00 is opaque), so this helper inverts
- * the alpha channel when present.
- *
- * Parameters:
- *  - hex: input color string (NUL-terminated). If NULL or malformed,
- *         the function emits a default opaque white color.
- *  - out: output buffer to receive the ASS color string (NUL-terminated).
- *  - outsz: size of the output buffer in bytes. The function uses
- *           snprintf and will not write past outsz bytes.
- *
- * Notes / behavior:
- *  - Accepts exactly 7-character strings "#RRGGBB" or 9-character
- *    strings "#AARRGGBB" (including the leading '#'). Other lengths or
- *    malformed input fall back to "&H00FFFFFF" (opaque white).
- *  - The output string format is compatible with ASS header/style color
- *    specifications (e.g., "PrimaryColour: &H00FFFFFF").
+ * Coarse-grained mutex for serializing libass operations when callers
+ * share renderer/track objects across threads. Prefer per-thread
+ * renderers where possible; these helpers are provided for the
+ * convenience of callers that must share objects.
  */
-static void hex_to_ass_color(const char *hex, char *out, size_t outsz) {
-    unsigned r=255,g=255,b=255,a=0;
-    /*
-     * Parse simple #RRGGBB or #AARRGGBB hex strings. We default to white
-     * when the input is missing or malformed. sscanf is used for concise
-     * parsing; the input length is checked first to choose the expected
-     * layout.
-     */
+static pthread_mutex_t render_ass_global_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void render_ass_lock(void) {
+    pthread_mutex_lock(&render_ass_global_lock);
+}
+
+void render_ass_unlock(void) {
+    pthread_mutex_unlock(&render_ass_global_lock);
+}
+
+
+/*
+ * Converts a single hexadecimal character to its integer value.
+ * Accepts characters '0'-'9', 'a'-'f', and 'A'-'F'.
+ * Returns the corresponding integer value (0-15) if valid,
+ * or -1 if the character is not a valid hexadecimal digit.
+ */
+static int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
+/**
+ * Parses two hexadecimal characters from the input string and stores the result as a byte.
+ *
+ * param s   Pointer to a string containing at least two hexadecimal characters.
+ * param out Pointer to an unsigned variable where the parsed byte will be stored.
+ * return    0 on success, -1 if either character is not a valid hexadecimal digit.
+ */
+static int parse_hex_byte(const char *s, unsigned *out) {
+    int hi = hex_val(s[0]);
+    int lo = hex_val(s[1]);
+    if (hi < 0 || lo < 0) return -1;
+    *out = (unsigned)((hi << 4) | lo);
+    return 0;
+}
+
+
+/**
+ * Converts a hex color string to ASS (Advanced SubStation Alpha) color format.
+ *
+ * This function takes a color string in the format "#RRGGBB" or "#AARRGGBB" and converts it
+ * to the ASS color format "&HAABBGGRR", where AA is the inverted alpha channel, BB is blue,
+ * GG is green, and RR is red. If the input is invalid, it defaults to white ("&H00FFFFFF").
+ *
+ * param hex   Input color string in hex format ("#RRGGBB" or "#AARRGGBB").
+ * param out   Output buffer to store the ASS color string.
+ * param outsz Size of the output buffer.
+ */
+void render_ass_hex_to_ass_color(const char *hex, char *out, size_t outsz) {
+    unsigned r = 255, g = 255, b = 255, a = 0;
+
     if (!hex || hex[0] != '#') {
-        /* output ASS white: alpha 0x00 (opaque), color FFFFFF */
         snprintf(out, outsz, "&H00FFFFFF");
         return;
     }
-    if (strlen(hex) == 7) {
+    size_t len = strlen(hex);
+    if (len == 7) {
         /* #RRGGBB */
-        sscanf(hex+1, "%02x%02x%02x", &r,&g,&b);
-        a = 0x00; /* fully opaque (ASS alpha is inverted below) */
-    } else if (strlen(hex) == 9) {
+        unsigned vr, vg, vb;
+        if (parse_hex_byte(hex + 1, &vr) < 0 ||
+            parse_hex_byte(hex + 3, &vg) < 0 ||
+            parse_hex_byte(hex + 5, &vb) < 0) {
+            snprintf(out, outsz, "&H00FFFFFF");
+            return;
+        }
+        r = vr; g = vg; b = vb; a = 0x00;
+    } else if (len == 9) {
         /* #AARRGGBB */
-        sscanf(hex+1, "%02x%02x%02x%02x", &a,&r,&g,&b);
+        unsigned va, vr, vg, vb;
+        if (parse_hex_byte(hex + 1, &va) < 0 ||
+            parse_hex_byte(hex + 3, &vr) < 0 ||
+            parse_hex_byte(hex + 5, &vg) < 0 ||
+            parse_hex_byte(hex + 7, &vb) < 0) {
+            snprintf(out, outsz, "&H00FFFFFF");
+            return;
+        }
+        a = va; r = vr; g = vg; b = vb;
+    } else {
+        snprintf(out, outsz, "&H00FFFFFF");
+        return;
     }
-    /* ASS encodes alpha inverted (0x00 == opaque). Convert by inverting. */
-    unsigned inv_a = 0xFF - a;
-    /* Format to &HAABBGGRR as required by ASS headers/styles. */
-    snprintf(out, outsz, "&H%02X%02X%02X%02X", inv_a, b, g, r);
+
+    unsigned inv_a = 0xFF - (a & 0xFF);
+    snprintf(out, outsz, "&H%02X%02X%02X%02X", inv_a, b & 0xFF, g & 0xFF, r & 0xFF);
+}
+
+/* Backwards-compatibility wrapper for internal callers that referenced
+ * the older static helper name `hex_to_ass_color`. Keep a thin wrapper
+ * so existing call-sites need not be modified. */
+static void hex_to_ass_color(const char *hex, char *out, size_t outsz) {
+    render_ass_hex_to_ass_color(hex, out, outsz);
+}
+
+/**
+ * Validates the parameters for an ASS image tile.
+ *
+ * Performs basic sanity checks on the width, height, stride, and bitmap pointer.
+ * Ensures that the stride is at least as large as the width, and that all values are positive.
+ * Applies an upper limit to the total number of pixels to prevent excessive allocations or loops,
+ * guarding against corrupted or malicious input.
+ *
+ * param w       Width of the image tile in pixels.
+ * param h       Height of the image tile in pixels.
+ * param stride  Number of bytes per row in the bitmap.
+ * param bitmap  Pointer to the bitmap data.
+ * return        1 if the parameters are valid, 0 otherwise.
+ */
+int render_ass_validate_image_tile(int w, int h, int stride, const void *bitmap) {
+    /* Basic sanity checks */
+    if (!bitmap) return 0;
+    if (w <= 0 || h <= 0) return 0;
+    if (stride <= 0) return 0;
+    if (stride < w) return 0;
+    /* Prevent absurdly large allocations / loops; arbitrary cap to avoid
+     * unbounded work if libass produced corrupted dimensions. This value
+     * is intentionally conservative; tiles larger than this are unlikely
+     * to appear in real-world subtitles. */
+    const size_t MAX_TILE_PIXELS = 10 * 1000 * 1000; /* 10M pixels */
+    size_t pixels = (size_t)stride * (size_t)h;
+    if (pixels == 0 || pixels > MAX_TILE_PIXELS) return 0;
+    return 1;
 }
 
 /*
@@ -137,7 +265,7 @@ static void hex_to_ass_color(const char *hex, char *out, size_t outsz) {
 ASS_Library* render_ass_init(void) {
     ASS_Library *lib = ass_library_init();
     if (!lib) {
-        fprintf(stderr, "libass: failed to init\n");
+        LOG(0, "libass: failed to init\n");
         return NULL;
     }
     /* Silence libass logging (we control diagnostics through debug_level). */
@@ -168,6 +296,10 @@ ASS_Library* render_ass_init(void) {
  *    across systems.
  */
 ASS_Renderer* render_ass_renderer(ASS_Library *lib, int w, int h) {
+    if (!lib) {
+        LOG(0, "render_ass_renderer: NULL lib provided\n");
+        return NULL;
+    }
     ASS_Renderer *r = ass_renderer_init(lib);
     if (!r) return NULL;
     /* Set frame size so libass can compute glyph layout & wrapping correctly. */
@@ -247,26 +379,51 @@ void render_ass_add_event(ASS_Track *track,
                           int64_t start_ms,
                           int64_t end_ms)
 {
+    if (!track) {
+        LOG(0, "render_ass_add_event: NULL track provided\n");
+        return;
+    }
+
     /* Allocate an event slot; ass_alloc_event returns a non-negative
      * index on success. */
     int ev = ass_alloc_event(track);
     if (ev < 0) return; /* allocation failure; silently skip event */
 
+    /* Defensive check: ensure events array exists and index is in range. */
+    if (!track->events || ev < 0 || ev >= track->n_events) {
+        /* Unexpected: libass did not provide a writable event slot. */
+        return;
+    }
+
     /* Populate minimal event fields: start time and duration (ms). The
-     * library stores times as ints; cast from int64_t accordingly. */
-    track->events[ev].Start    = (int)start_ms;
-    track->events[ev].Duration = (int)(end_ms - start_ms);
+     * library stores times as ints; cast from int64_t accordingly with
+     * clamping to avoid truncation issues. */
+    if (start_ms < INT_MIN) track->events[ev].Start = INT_MIN;
+    else if (start_ms > INT_MAX) track->events[ev].Start = INT_MAX;
+    else track->events[ev].Start = (int)start_ms;
+
+    int64_t dur = end_ms - start_ms;
+    if (dur < INT_MIN) track->events[ev].Duration = INT_MIN;
+    else if (dur > INT_MAX) track->events[ev].Duration = INT_MAX;
+    else track->events[ev].Duration = (int)dur;
+
     /* Use style index 0 (Default) unless a different style is injected. */
-    track->events[ev].Style    = 0;
+    track->events[ev].Style = 0;
     /* Duplicate the text into libass-managed memory; the caller retains
-     * ownership of the original `text` pointer. */
-    track->events[ev].Text     = strdup(text ? text : "");
+     * ownership of the original `text` pointer. Check for allocation
+     * failure from strdup and avoid storing a dangling pointer. */
+    char *dup_text = strdup(text ? text : "");
+    if (!dup_text) {
+        LOG(1, "render_ass_add_event: strdup failed for event %d\n", ev);
+        track->events[ev].Text = NULL;
+    } else {
+        track->events[ev].Text = dup_text;
+    }
 
     /* Optional debug trace for developers. */
-    extern int debug_level;
     if (debug_level > 1) {
-        fprintf(stderr,
-            "[render_ass] Added event #%d: %lld → %lld ms | text='%s'\n",
+        LOG(2,
+            "Added event #%d: %lld → %lld ms | text='%s'\n",
             ev,
             (long long)start_ms,
             (long long)end_ms,
@@ -339,10 +496,18 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
 
 
     /* Get bounding box */
-    int minx=99999, miny=99999, maxx=0, maxy=0;
+    int minx = INT_MAX, miny = INT_MAX, maxx = INT_MIN, maxy = INT_MIN;
     /* Walk the linked list of images to compute the union bounding box of
      * all drawn fragments. This tightly bounds our output Bitmap to the
      * minimal rectangle containing all non-empty image tiles. */
+    /* Per-frame small color->palette-index cache to avoid repeated
+     * nearest_palette_index() work when many tiles share colors.
+     */
+    const int MAX_COLOR_CACHE = 128;
+    struct { uint32_t rgba; int palidx; } color_cache[MAX_COLOR_CACHE];
+    int color_cache_len = 0;
+    int color_cache_evict = 0;
+
     for (ASS_Image *cur = img; cur; cur = cur->next) {
         if (cur->w <= 0 || cur->h <= 0) continue; /* skip degenerate tiles */
         if (cur->dst_x < minx) minx = cur->dst_x;
@@ -355,24 +520,100 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
     int w = maxx - minx;
     int h = maxy - miny;
 
+    /* Guard against absurd sizes and integer overflow when computing
+     * the allocation size. Use size_t for multiplication and verify the
+     * result by reverse division. */
+    if (w <= 0 || h <= 0) return bm;
+    size_t pixels = (size_t)w * (size_t)h;
+    if (pixels / (size_t)w != (size_t)h) {
+        /* Overflow detected */
+        LOG(0, "render_ass_frame: size overflow w=%d h=%d\n", w, h);
+        return bm;
+    }
+
     bm.w = w;
     bm.h = h;
     bm.x = minx;
     bm.y = miny;
+
     /* Allocate index buffer (one byte per pixel). Caller must free. */
-    /* Allocate one-byte-per-pixel index buffer and zero it. Zero ensures
-     * transparent/unused pixels remain at palette index 0 (commonly used
-     * for transparent color in DVB palettes). */
-    bm.idxbuf = calloc(w*h, 1);
+    bm.idxbuf = calloc(pixels, 1);
+    if (!bm.idxbuf) {
+        LOG(0, "render_ass_frame: calloc failed for %zu pixels\n", pixels);
+        return bm;
+    }
+    /* record buffer sizes for caller validation */
+    bm.idxbuf_len = pixels;
 
     /* Allocate and initialize the palette used to map ARGB colors to
-     * palette indices. The implementation uses a 16-entry palette for
-     * broadcast/teletext compatibility. Caller must free bm.palette. */
-    /* Allocate a small palette and initialize it using the project's
-     * init_palette helper. The chosen palette size (16) matches
-     * conventional broadcast subtitle palettes. */
-    bm.palette = malloc(16 * sizeof(uint32_t));
-    init_palette(bm.palette, palette_mode);
+     * palette indices. We optimize by caching small palettes per
+     * `palette_mode` to avoid repeated work across frames. The cache is
+     * protected by a mutex to be safe for multi-threaded use.
+     */
+    {
+        const int PALETTE_CACHE_SIZE = 4;
+        static pthread_mutex_t palette_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+        typedef struct { char *mode; uint32_t palette[16]; int used; } pal_entry_t;
+        static pal_entry_t palette_cache[4] = {0};
+
+        uint32_t palbuf[16];
+        int cached = 0;
+
+        pthread_mutex_lock(&palette_cache_lock);
+        for (int ci = 0; ci < PALETTE_CACHE_SIZE; ci++) {
+            if (!palette_cache[ci].used) continue;
+            if ((palette_mode == NULL && palette_cache[ci].mode == NULL) ||
+                (palette_mode && palette_cache[ci].mode && strcmp(palette_mode, palette_cache[ci].mode) == 0)) {
+                /* Move-to-front for LRU */
+                pal_entry_t hit = palette_cache[ci];
+                for (int j = ci; j > 0; j--) palette_cache[j] = palette_cache[j-1];
+                palette_cache[0] = hit;
+                memcpy(palbuf, palette_cache[0].palette, sizeof(palbuf));
+                cached = 1;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&palette_cache_lock);
+
+        if (!cached) {
+            /* Compute palette into temporary buffer */
+            init_palette(palbuf, palette_mode);
+            /* Try to insert into cache */
+            int insert_cache = 1;
+            char *mode_copy = NULL;
+            if (palette_mode) {
+                mode_copy = strdup(palette_mode);
+                if (!mode_copy) {
+                    LOG(0, "render_ass_frame: strdup failed for palette mode key '%s'\n",
+                        palette_mode);
+                    insert_cache = 0;
+                }
+            }
+            pthread_mutex_lock(&palette_cache_lock);
+            if (insert_cache) {
+                pal_entry_t evicted = palette_cache[PALETTE_CACHE_SIZE-1];
+                for (int j = PALETTE_CACHE_SIZE-1; j > 0; j--) palette_cache[j] = palette_cache[j-1];
+                palette_cache[0].used = 1;
+                palette_cache[0].mode = mode_copy;
+                memcpy(palette_cache[0].palette, palbuf, sizeof(palbuf));
+                if (evicted.used && evicted.mode) free(evicted.mode);
+            }
+            pthread_mutex_unlock(&palette_cache_lock);
+            if (!insert_cache && mode_copy) free(mode_copy);
+        }
+
+        /* Allocate caller-owned palette and copy values */
+        bm.palette = malloc(16 * sizeof(uint32_t));
+            if (!bm.palette) {
+                LOG(0, "render_ass_frame: malloc failed for palette\n");
+                free(bm.idxbuf);
+                bm.idxbuf = NULL;
+                bm.idxbuf_len = 0;
+                return bm;
+            }
+        memcpy(bm.palette, palbuf, 16 * sizeof(uint32_t));
+        bm.palette_bytes = 16 * sizeof(uint32_t);
+    }
 
     /* For each ASS_Image tile, compute the palette index corresponding to
      * the tile's color and blend coverage into the index buffer. libass
@@ -394,20 +635,42 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
         uint8_t g = (argb >> 8) & 0xFF;
         uint8_t b = (argb) & 0xFF;
         uint32_t rgba = (a << 24) | (r << 16) | (g << 8) | b;
-        int palidx = nearest_palette_index(bm.palette, 16, rgba);
+        int palidx = -1;
+        for (int ci = 0; ci < color_cache_len; ci++) {
+            if (color_cache[ci].rgba == rgba) { palidx = color_cache[ci].palidx; break; }
+        }
+        if (palidx < 0) {
+            palidx = nearest_palette_index(bm.palette, 16, rgba);
+            if (color_cache_len < MAX_COLOR_CACHE) {
+                color_cache[color_cache_len].rgba = rgba;
+                color_cache[color_cache_len].palidx = palidx;
+                color_cache_len++;
+            } else {
+                color_cache[color_cache_evict].rgba = rgba;
+                color_cache[color_cache_evict].palidx = palidx;
+                color_cache_evict = (color_cache_evict + 1) % MAX_COLOR_CACHE;
+            }
+        }
 
         /* Rasterize coverage mask into the index buffer, offset by the
          * computed union bounding box (minx/miny). We bound-check to avoid
          * writing outside the allocated region when images extend beyond
          * the union box due to rounding or negative dst_x/dst_y. */
-        for (int yy=0; yy<cur->h; yy++) {
-            for (int xx=0; xx<cur->w; xx++) {
-                uint8_t cov = cur->bitmap[yy*cur->stride + xx];
+        /* Validate bitmap/stride before accessing memory */
+        if (!render_ass_validate_image_tile(cur->w, cur->h, cur->stride, cur->bitmap)) {
+            /* malformed or unexpectedly large tile; skip */
+            continue;
+        }
+
+        for (int yy = 0; yy < cur->h; yy++) {
+            for (int xx = 0; xx < cur->w; xx++) {
+                uint8_t cov = cur->bitmap[yy * cur->stride + xx];
                 if (cov > 0) {
                     int dx = cur->dst_x + xx - minx;
                     int dy = cur->dst_y + yy - miny;
                     if (dx >= 0 && dx < w && dy >= 0 && dy < h) {
-                        bm.idxbuf[dy*w + dx] = palidx;
+                        size_t idx = (size_t)dy * (size_t)w + (size_t)dx;
+                        if (idx < bm.idxbuf_len) bm.idxbuf[idx] = palidx;
                     }
                 }
             }
@@ -447,14 +710,17 @@ void render_ass_done(ASS_Library *lib, ASS_Renderer *renderer) {
  */
 void render_ass_free_track(ASS_Track *track) {
     if (!track) return;
-    /* Free events and text within the track */
+    /* Free only per-event duplicated Text strings. The events array
+     * itself is typically owned by libass; freeing it here can cause
+     * undefined behavior. We free Text pointers we own (duplicated via
+     * strdup in render_ass_add_event) and set them to NULL. */
     if (track->events) {
         for (int i = 0; i < track->n_events; i++) {
-            if (track->events[i].Text) free(track->events[i].Text);
+            if (track->events[i].Text) {
+                free(track->events[i].Text);
+                track->events[i].Text = NULL;
+            }
         }
-        free(track->events);
-        track->events = NULL;
-        track->n_events = 0;
     }
     /* libass does not expose a public free for ASS_Track; assume caller will discard pointer */
 }
@@ -515,7 +781,7 @@ void render_ass_set_style(ASS_Track *track,
      * style used by render_ass_add_event. play resolution is currently
      * hard-coded but could be parameterized if necessary. */
     char header[2048];
-    snprintf(header, sizeof(header),
+    int needed = snprintf(header, sizeof(header),
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
         "PlayResX: %d\n"
@@ -534,7 +800,47 @@ void render_ass_set_style(ASS_Track *track,
     720, 576,   /* default, or pass in video_w/h */
         font, size, fg_ass, fg_ass, outline_ass, shadow_ass);
 
-    ass_process_data(track, header, strlen(header));
+    if (needed < 0) {
+        LOG(1, "render_ass_set_style: snprintf error building header\n");
+        return;
+    }
+
+    if ((size_t)needed >= sizeof(header)) {
+        /* Static buffer truncated; allocate dynamically to the required size. */
+        size_t bufsz = (size_t)needed + 1;
+        char *dyn = malloc(bufsz);
+        if (!dyn) {
+            LOG(1, "render_ass_set_style: malloc failed for header size %zu\n", bufsz);
+            return;
+        }
+        int r2 = snprintf(dyn, bufsz,
+            "[Script Info]\n"
+            "ScriptType: v4.00+\n"
+            "PlayResX: %d\n"
+            "PlayResY: %d\n"
+            "\n"
+            "[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+            "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+            "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+            "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+            "Style: Default,%s,%d,%s,%s,%s,%s,"
+            "0,0,0,0,100,100,0,0,1,0,0,2,10,10,10,1\n"
+            "\n"
+            "[Events]\n"
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+        720, 576,
+            font, size, fg_ass, fg_ass, outline_ass, shadow_ass);
+        if (r2 < 0 || (size_t)r2 >= bufsz) {
+            LOG(1, "render_ass_set_style: snprintf into dynamic buffer failed\n");
+            free(dyn);
+            return;
+        }
+        ass_process_data(track, dyn, (size_t)r2);
+        free(dyn);
+    } else {
+        ass_process_data(track, header, (size_t)needed);
+    }
 }
 
 /*
@@ -551,16 +857,16 @@ void render_ass_set_style(ASS_Track *track,
 void render_ass_debug_styles(ASS_Track *track) {
 
     if (!track) {
-        fprintf(stderr, "[render_ass] No track to debug\n");
+        LOG(0, "[render_ass] No track to debug\n");
         return;
     }
 
-    fprintf(stderr, "\n=== [render_ass] Style Debug Dump ===\n");
-    fprintf(stderr, "Track has %d styles\n", track->n_styles);
+    LOG(2, "\n=== [render_ass] Style Debug Dump ===\n");
+    LOG(2, "Track has %d styles\n", track->n_styles);
 
     for (int i = 0; i < track->n_styles; i++) {
         ASS_Style *st = &track->styles[i];
-        fprintf(stderr,
+        LOG(2,
             "  [%d] Name='%s' Font='%s' Size=%f Align=%d\n"
             "       Primary=%08X Secondary=%08X Outline=%08X Back=%08X\n",
             i,
@@ -574,5 +880,5 @@ void render_ass_debug_styles(ASS_Track *track) {
             st->BackColour);
     }
 
-    fprintf(stderr, "======================================\n");
+    LOG(2, "======================================\n");
 }

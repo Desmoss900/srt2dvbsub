@@ -50,6 +50,7 @@
 #define RENDER_PANGO_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /**
  * @file render_pango.h
@@ -79,6 +80,8 @@ typedef struct {
     uint32_t *palette;  /**< Array of 32-bit ARGB palette entries (host endianness) */
     int w,h,x,y;        /**< Width/height and top-left position in video coords */
     int nb_colors;      /**< Number of valid colors in `palette` (typically 16) */
+    size_t idxbuf_len;  /**< Number of bytes allocated in idxbuf (width*height) */
+    size_t palette_bytes; /**< Number of bytes allocated in palette (nb_colors * 4) */
 } Bitmap;
 
 /**
@@ -89,6 +92,7 @@ typedef struct {
  * @param disp_h        Display height in pixels.
  * @param fontsize      If >0, force font size; otherwise an adaptive size is chosen.
  * @param fontfam       Font family to use (NULL -> default).
+ * @param fontstyle     Optional font style/variant string appended to the family (NULL -> default).
  * @param fgcolor       Foreground color string in "#RRGGBB" or "#AARRGGBB" form.
  * @param outlinecolor  Outline/stroke color string.
  * @param shadowcolor   Shadow color string.
@@ -97,13 +101,14 @@ typedef struct {
  * @return Bitmap with allocated idxbuf and palette on success. Caller must free both.
  */
 Bitmap render_text_pango(const char *markup,
-                          int disp_w, int disp_h,
-                          int fontsize, const char *fontfam,
-                          const char *fgcolor,
-                          const char *outlinecolor,
-                          const char *shadowcolor,
-                          int align_code,
-                          const char *palette_mode);
+                         int disp_w, int disp_h,
+                         int fontsize, const char *fontfam,
+                         const char *fontstyle,
+                         const char *fgcolor,
+                         const char *outlinecolor,
+                         const char *shadowcolor,
+                         int align_code,
+                         const char *palette_mode);
 
 /**
  * Convert SRT cue text to Pango markup.

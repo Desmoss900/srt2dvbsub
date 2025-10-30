@@ -76,8 +76,26 @@ int render_threads = 8;
 /* Supersampling factor applied when rasterizing text with Pango/Cairo.
  * Higher values reduce aliasing and preserve small glyph details at the
  * cost of CPU and memory. A value of 1 disables supersampling. */
-int ssaa_override = 6; /* default to 6x supersampling for smoother edges */
+int ssaa_override = 4; /* default to 4x supersampling for smoother edges */
 
 /* Disable the unsharp mask pass when non-zero. Useful for debugging or on
  * platforms where the unsharp kernel causes unacceptable haloing. */
 int no_unsharp = 0;
+
+/* Global variable to control the verbosity of debug output.
+ * A higher value increases the amount of debug information printed.
+ * Default is 0 (no debug output).
+ */
+int debug_level = 0;
+
+/* 
+ * Flag indicating whether ASS (Advanced SubStation Alpha) subtitle support is enabled.
+ * 0 means ASS support is disabled; non-zero values enable ASS support.
+ */
+int use_ass = 0;
+
+/* Width of the video in pixels. Default value is set to 720. */
+int video_w = 720;
+
+/* Height of the video in pixels. Default value is set to 480*/
+int video_h = 480;

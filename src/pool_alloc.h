@@ -45,89 +45,51 @@
 * ────────────────────────────────────────────────────────────────
 */
 
-#ifndef SRT2DVB_RUNTIME_OPTS_H
-#define SRT2DVB_RUNTIME_OPTS_H
-
-/**
- * @file runtime_opts.h
- * @brief Global runtime-configurable options used by the application.
+/*
+ * pool_alloc.h
  *
- * These globals are populated (with defaults) in `runtime_opts.c` and may be
- * overridden by command-line parsing in `main.c`. They are intentionally
- * simple globals to keep option access convenient across the codebase.
- *
- * Thread-safety: the variables are read-mostly after initialization. Any
- * runtime mutation must be synchronized by the caller.
+ * Small thread-safe pool allocator for frequently-requested buffer sizes.
+ * Intended for short-lived index/palette buffers used in subtitle conversion.
  */
+#ifndef SRT2DVB_POOL_ALLOC_H
+#define SRT2DVB_POOL_ALLOC_H
 
-/**
- * @brief Number of encoder threads to be used.
+#include <stddef.h>
+
+
+/*
+ * @brief Allocates a memory block of the specified size from a memory pool.
  *
- * This external variable specifies how many threads should be allocated
- * for encoding operations. It can be set to optimize performance based
- * on available hardware resources.
- */
- extern int enc_threads;
-
-/**
- * @brief Number of threads used for rendering operations.
+ * This function attempts to allocate a block of memory of at least `size` bytes
+ * from an internal memory pool. The memory pool may provide faster allocation
+ * and deallocation compared to standard heap allocation.
  *
- * This external integer variable specifies how many threads
- * are allocated for rendering tasks. It can be set to optimize
- * performance based on available system resources.
+ * @param size The size in bytes of the memory block to allocate.
+ * @return A pointer to the allocated memory block, or NULL if allocation fails.
  */
-extern int render_threads;
+void *pool_alloc(size_t size);
 
-/**
- * @brief Overrides the default SSAA (Super-Sampling Anti-Aliasing) setting.
+
+/*
+ * @brief Frees a memory block previously allocated from a pool.
  *
- * This external integer variable can be used to force a specific SSAA configuration
- * at runtime, bypassing the default or configured value.
+ * This function releases a memory block pointed to by @p ptr of size @p size
+ * back to the memory pool. The memory must have been allocated using the
+ * corresponding pool allocation function.
  *
- * @note The exact effect depends on how this variable is used in the implementation.
+ * @param ptr Pointer to the memory block to be freed.
+ * @param size Size of the memory block to be freed, in bytes.
  */
-extern int ssaa_override;
+void pool_free(void *ptr, size_t size);
 
-/**
- * @brief Global flag to disable the unsharp filter.
+
+/*
+ * @brief Destroys the memory pool and releases all allocated resources.
  *
- * When set to a non-zero value, the unsharp filter will be disabled in the runtime.
- * This variable is typically set via command-line options or configuration files.
+ * This function should be called when the memory pool is no longer needed.
+ * After calling this function, any pointers previously allocated from the pool
+ * become invalid.
  */
-extern int no_unsharp;
+void pool_destroy(void);
 
-/**
- * @brief Global variable to control the level of debug output.
- *
- * The value of debug_level determines the verbosity of debug messages
- * throughout the application. Higher values enable more detailed logging.
- */
-extern int debug_level;
-
-/**
- * Indicates whether ASS (Advanced SubStation Alpha) subtitle support is enabled.
- * 
- * When set to a non-zero value, the application will use ASS subtitles.
- * When set to zero, ASS subtitles are disabled.
- */
-extern int use_ass;
-
-/**
- * @brief External variable representing the width of the video.
- *
- * This variable is declared as an external integer and is expected to be
- * defined elsewhere in the program. It typically holds the width (in pixels)
- * of the video being processed or displayed.
- */
-extern int video_w;
-
-/**
- * @brief Height of the video frame in pixels.
- *
- * This external integer variable specifies the vertical resolution (height)
- * of the video frame. It is typically set during runtime configuration and
- * used throughout the application wherever video frame dimensions are required.
- */
-extern int video_h;
-
-#endif /* SRT2DVB_RUNTIME_OPTS_H */
+#endif /* SRT2DVB_POOL_ALLOC_H */

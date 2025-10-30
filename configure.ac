@@ -1,4 +1,4 @@
-AC_INIT([srt2dvbsub], [1.0], [bugs@example.com])
+AC_INIT([srt2dvbsub], [1.0], [bugs@chili-iptv.info])
 
 # Default to disabling Automake dependency-tracking unless explicitly enabled.
 # This makes the common developer/workflow faster (no per-file dep-tracking)
@@ -18,12 +18,85 @@ PKG_PROG_PKG_CONFIG
 AS_IF([test "$srcdir" = "$builddir"],
   [AC_MSG_ERROR([In-tree builds are not supported. Please run configure from a separate build directory: mkdir build && cd build && ../configure])])
 
-# Use pkg-config for deps
-PKG_CHECK_MODULES([DEPS],
-  [pangocairo pango cairo fontconfig],
+# Also check FFmpeg libs explicitly (development headers)
+PKG_CHECK_MODULES([FFMPEG],
+  [libavformat >= 58.0.0
+   libavcodec  >= 58.0.0
+   libavutil   >= 56.0.0
+   libswscale  >= 5.0.0],
   [],
-  [AC_MSG_ERROR([Required libraries not found. Install pangocairo (pango+cairo) and fontconfig.])]
-)
+  [AC_MSG_ERROR([Missing FFmpeg development libraries (libavformat, libavcodec, libavutil, libswscale)])])
+AC_DEFINE([HAVE_FONTCONFIG], [1], [Define if fontconfig is available])
+
+# Use pkg-config for deps. Check each module individually so we can
+# report the exact installed version for diagnostics and build-info.
+# To inspect versions locally you can run:
+#   pkg-config --modversion pangocairo pango cairo fontconfig
+# or each individually, e.g. `pkg-config --modversion pangocairo`.
+
+AC_MSG_CHECKING([for pangocairo (pkg-config >= 1.52.1)])
+if pkg-config --exists "pangocairo >= 1.52.1"; then
+  PANGOCAIRO_VERSION=`pkg-config --modversion pangocairo 2>/dev/null || echo unknown`
+  PANGOCAIRO_CFLAGS="`pkg-config --cflags pangocairo 2>/dev/null || echo`"
+  PANGOCAIRO_LIBS="`pkg-config --libs pangocairo 2>/dev/null || echo`"
+  AC_MSG_RESULT([yes ($PANGOCAIRO_VERSION)])
+else
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([Required library 'pangocairo' >= 1.52.1 not found. Install/upgrade pangocairo (pango+cairo).])
+fi
+AC_SUBST([PANGOCAIRO_VERSION])
+AC_SUBST([PANGOCAIRO_CFLAGS])
+AC_SUBST([PANGOCAIRO_LIBS])
+
+AC_MSG_CHECKING([for pango (pkg-config >= 1.52.1)])
+if pkg-config --exists "pango >= 1.52.1"; then
+  PANGO_VERSION=`pkg-config --modversion pango 2>/dev/null || echo unknown`
+  PANGO_CFLAGS="`pkg-config --cflags pango 2>/dev/null || echo`"
+  PANGO_LIBS="`pkg-config --libs pango 2>/dev/null || echo`"
+  AC_MSG_RESULT([yes ($PANGO_VERSION)])
+else
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([Required library 'pango' >= 1.52.1 not found. Install/upgrade pango development files.])
+fi
+AC_SUBST([PANGO_VERSION])
+AC_SUBST([PANGO_CFLAGS])
+AC_SUBST([PANGO_LIBS])
+
+AC_MSG_CHECKING([for cairo (pkg-config >= 1.18.0)])
+if pkg-config --exists "cairo >= 1.18.0"; then
+  CAIRO_VERSION=`pkg-config --modversion cairo 2>/dev/null || echo unknown`
+  CAIRO_CFLAGS="`pkg-config --cflags cairo 2>/dev/null || echo`"
+  CAIRO_LIBS="`pkg-config --libs cairo 2>/dev/null || echo`"
+  AC_MSG_RESULT([yes ($CAIRO_VERSION)])
+else
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([Required library 'cairo' >= 1.18.0 not found. Install/upgrade cairo development files.])
+fi
+AC_SUBST([CAIRO_VERSION])
+AC_SUBST([CAIRO_CFLAGS])
+AC_SUBST([CAIRO_LIBS])
+
+AC_MSG_CHECKING([for fontconfig (pkg-config >= 2.15.0)])
+if pkg-config --exists "fontconfig >= 2.15.0"; then
+  FONTCONFIG_VERSION=`pkg-config --modversion fontconfig 2>/dev/null || echo unknown`
+  FONTCONFIG_CFLAGS="`pkg-config --cflags fontconfig 2>/dev/null || echo`"
+  FONTCONFIG_LIBS="`pkg-config --libs fontconfig 2>/dev/null || echo`"
+  AC_MSG_RESULT([yes ($FONTCONFIG_VERSION)])
+else
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([Required library 'fontconfig' >= 2.15.0 not found. Install/upgrade fontconfig development files.])
+fi
+AC_SUBST([FONTCONFIG_VERSION])
+AC_SUBST([FONTCONFIG_CFLAGS])
+AC_SUBST([FONTCONFIG_LIBS])
+
+# Aggregate discovered CFLAGS/LIBS into the legacy DEPS_* variables used by
+# the Makefile. This keeps the Makefile.am unchanged while making the
+# individual module flags available for more granular use if needed.
+DEPS_CFLAGS="${PANGOCAIRO_CFLAGS} ${PANGO_CFLAGS} ${CAIRO_CFLAGS} ${FONTCONFIG_CFLAGS}"
+DEPS_LIBS="${PANGOCAIRO_LIBS} ${PANGO_LIBS} ${CAIRO_LIBS} ${FONTCONFIG_LIBS}"
+AC_SUBST([DEPS_CFLAGS])
+AC_SUBST([DEPS_LIBS])
 
 # Optional libass support selectable at configure time
 AC_ARG_ENABLE([ass],
@@ -32,7 +105,7 @@ AC_ARG_ENABLE([ass],
   [enable_ass=no])
 
 if test "x$enable_ass" = "xyes" ; then
-  PKG_CHECK_MODULES([LIBASS], [libass], [], [AC_MSG_ERROR([libass requested via --enable-ass but not found])])
+  PKG_CHECK_MODULES([LIBASS], [libass >= 0.17.1], [], [AC_MSG_ERROR([libass requested via --enable-ass but not found or too old (need >= 0.17.1)])])
   AC_DEFINE([HAVE_LIBASS], [1], [Define if libass is available])
 else
   # Ensure variables exist even when libass not requested/available
@@ -43,15 +116,23 @@ AC_SUBST([LIBASS_CFLAGS])
 AC_SUBST([LIBASS_LIBS])
 AM_CONDITIONAL([USE_LIBASS], test "x$enable_ass" = "xyes" && test "x$LIBASS_CFLAGS" != "x")
 
-# Also check FFmpeg libs explicitly (development headers)
-PKG_CHECK_MODULES([FFMPEG],
-  [libavformat >= 58.0.0
-   libavcodec  >= 58.0.0
-   libavutil   >= 56.0.0
-   libswscale  >= 5.0.0],
-  [],
-  [AC_MSG_ERROR([Missing FFmpeg development libraries (libavformat, libavcodec, libavutil, libswscale)])])
-AC_DEFINE([HAVE_FONTCONFIG], [1], [Define if fontconfig is available])
+AC_ARG_ENABLE([thread-safe-mux],
+  AS_HELP_STRING([--disable-thread-safe-mux], [Disable mutex guard around mux writes]),
+  [enable_thread_safe_mux=$enableval],
+  [enable_thread_safe_mux=yes])
+
+if test "x$enable_thread_safe_mux" = "xno"; then
+  AC_DEFINE([ENABLE_THREAD_SAFE_MUX], [0], [Define to 1 to enable mutex guard around mux writes])
+  THREAD_SAFE_MUX_CPPFLAGS="-DENABLE_THREAD_SAFE_MUX=0"
+else
+  AC_DEFINE([ENABLE_THREAD_SAFE_MUX], [1], [Define to 1 to enable mutex guard around mux writes])
+  THREAD_SAFE_MUX_CPPFLAGS="-DENABLE_THREAD_SAFE_MUX=1"
+fi
+AC_SUBST([THREAD_SAFE_MUX_CPPFLAGS])
+
+if test "x$enable_thread_safe_mux" = "xno"; then
+  AC_MSG_NOTICE([Thread-safe mux disabled])
+fi
 
 
 
@@ -68,9 +149,6 @@ else
 fi
 
 AC_MSG_RESULT([$GIT_VERSION ($GIT_COMMIT, $GIT_DATE)])
-echo "[DEBUG] GIT_VERSION=$GIT_VERSION"
-echo "[DEBUG] GIT_COMMIT=$GIT_COMMIT"
-echo "[DEBUG] GIT_DATE=$GIT_DATE"
 
 # Export to Makefile substitutions (correct shell assignment)
 AC_SUBST(GIT_VERSION)

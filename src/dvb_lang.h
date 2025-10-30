@@ -45,89 +45,103 @@
 * ────────────────────────────────────────────────────────────────
 */
 
-#ifndef SRT2DVB_RUNTIME_OPTS_H
-#define SRT2DVB_RUNTIME_OPTS_H
+#pragma once
+#ifndef DVB_LANG_H
+#define DVB_LANG_H
+
+#include <ctype.h>
+#include <string.h>
+#include <strings.h>
+
 
 /**
- * @file runtime_opts.h
- * @brief Global runtime-configurable options used by the application.
+ * @struct dvb_lang_entry
+ * @brief Represents a DVB language entry with code, English name, and native name.
  *
- * These globals are populated (with defaults) in `runtime_opts.c` and may be
- * overridden by command-line parsing in `main.c`. They are intentionally
- * simple globals to keep option access convenient across the codebase.
- *
- * Thread-safety: the variables are read-mostly after initialization. Any
- * runtime mutation must be synchronized by the caller.
+ * This structure holds information about a language used in DVB (Digital Video Broadcasting).
+ * - code: The ISO 639-2 language code (e.g., "eng" for English).
+ * - ename: The English name of the language.
+ * - native: The native name of the language, as written in its own script.
  */
+struct dvb_lang_entry
+{
+    const char *code;
+    const char *ename;
+    const char *native;
+};
+
 
 /**
- * @brief Number of encoder threads to be used.
+ * @brief External array of DVB language entries.
  *
- * This external variable specifies how many threads should be allocated
- * for encoding operations. It can be set to optimize performance based
- * on available hardware resources.
+ * Lookup table mapping DVB three-letter language codes to their English and
+ * native-language names.
+ *
+ * Description:
+ *   Static array of `struct dvb_lang_entry` instances used to validate incoming
+ *   language identifiers and to present friendly names in help output. Each
+ *   element supplies the canonical DVB code, an English label, and a native
+ *   script/localized label. The sequence is terminated by a sentinel entry with
+ *   all fields set to NULL.
+ *
+ * Behavior:
+ *   - Resides in read-only storage for the lifetime of the program.
+ *   - Intended for iteration until the sentinel is encountered.
+ *   - Consumers treat the `code` field as case-sensitive three-letter ASCII
+ *     strings.
+ *
+ * Side effects:
+ *   - None by itself; serves purely as static data.
+ *
+ * Thread safety and reentrancy:
+ *   - Immutable table; safe for concurrent readers.
+ *
+ * Error handling:
+ *   - Sentinel entry prevents overruns during iteration when code checks rely on
+ *     null pointers.
+ *
+ * Intended use:
+ *   - Support language validation, option parsing, and user-facing displays.
  */
- extern int enc_threads;
+extern const struct dvb_lang_entry dvb_langs[];
 
 /**
- * @brief Number of threads used for rendering operations.
+ * @brief is_valid_dvb_lang Checks if a given language code is a valid DVB language code.
  *
- * This external integer variable specifies how many threads
- * are allocated for rendering tasks. It can be set to optimize
- * performance based on available system resources.
- */
-extern int render_threads;
-
-/**
- * @brief Overrides the default SSAA (Super-Sampling Anti-Aliasing) setting.
+ * Validate a three-letter DVB language code against the compiled-in lookup
+ * table.
  *
- * This external integer variable can be used to force a specific SSAA configuration
- * at runtime, bypassing the default or configured value.
+ * Description:
+ *   Confirm that the provided string is non-null, exactly three characters in
+ *   length, and composed solely of alphabetic characters. If it passes those
+ *   structural checks, a lowercase copy is matched against the entries in
+ *   `dvb_langs`, returning success on the first hit.
  *
- * @note The exact effect depends on how this variable is used in the implementation.
- */
-extern int ssaa_override;
-
-/**
- * @brief Global flag to disable the unsharp filter.
+ * Behavior:
+ *   - Rejects null pointers and strings that are not precisely three characters.
+ *   - Converts each character to lowercase using the C locale and stores it in
+ *     a temporary buffer.
+ *   - Performs a linear search through `dvb_langs`, comparing with `strcmp`.
+ *   - Returns 1 for a match, 0 otherwise.
  *
- * When set to a non-zero value, the unsharp filter will be disabled in the runtime.
- * This variable is typically set via command-line options or configuration files.
- */
-extern int no_unsharp;
-
-/**
- * @brief Global variable to control the level of debug output.
+ * Side effects:
+ *   - None beyond reading `code` and the `dvb_langs` table; no I/O or heap use.
  *
- * The value of debug_level determines the verbosity of debug messages
- * throughout the application. Higher values enable more detailed logging.
- */
-extern int debug_level;
-
-/**
- * Indicates whether ASS (Advanced SubStation Alpha) subtitle support is enabled.
+ * Thread safety and reentrancy:
+ *   - Read-only operation; safe for concurrent calls when `dvb_langs` remains
+ *     immutable.
+ *
+ * Error handling:
+ *   - Treats null inputs, non-alphabetic characters, or incorrect length as
+ *     invalid and returns 0.
+ *
+ * Intended use:
+ *   - Validate user-supplied language codes prior to muxing metadata or subtitle
+ *     streams.
  * 
- * When set to a non-zero value, the application will use ASS subtitles.
- * When set to zero, ASS subtitles are disabled.
+ * @param code The language code to validate (must be a 3-letter string).
+ * @return 1 if the code is valid, 0 otherwise.
  */
-extern int use_ass;
+int is_valid_dvb_lang(const char *code);
 
-/**
- * @brief External variable representing the width of the video.
- *
- * This variable is declared as an external integer and is expected to be
- * defined elsewhere in the program. It typically holds the width (in pixels)
- * of the video being processed or displayed.
- */
-extern int video_w;
-
-/**
- * @brief Height of the video frame in pixels.
- *
- * This external integer variable specifies the vertical resolution (height)
- * of the video frame. It is typically set during runtime configuration and
- * used throughout the application wherever video frame dimensions are required.
- */
-extern int video_h;
-
-#endif /* SRT2DVB_RUNTIME_OPTS_H */
+#endif

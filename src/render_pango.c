@@ -234,6 +234,10 @@ void render_pango_set_no_unsharp(int no) { atomic_store(&g_no_unsharp, no); }
 void init_palette(uint32_t *pal,const char *mode) {
     if (!pal) return;
 
+    /* Contract: palette index 0 MUST be transparent (alpha == 0). Ensure
+     * this at function start so all control paths satisfy the contract. */
+    pal[0] = 0x00000000;
+
     /*
      * Sets up a 16-color palette (`pal`) based on the specified `mode` string.
      *
@@ -351,6 +355,9 @@ static int allocate_bitmap_buffers(Bitmap *bm, size_t w, size_t h, const char *p
     init_palette(bm->palette, palette_mode);
     /* record how many colors are valid in the palette */
     bm->nb_colors = 16;
+    /* record buffer sizes for later validation */
+    bm->idxbuf_len = pix_count;
+    bm->palette_bytes = 16 * sizeof(uint32_t);
     return 1;
 }
 
@@ -410,6 +417,13 @@ static int nearest_palette_index_display(uint32_t *palette, int npal, double rd,
     return best;
 }
 
+/* Allocate and return an empty, NUL-terminated string. */
+static char *alloc_empty_string(void) {
+    char *s = malloc(1);
+    if (s) s[0] = '\0';
+    return s;
+}
+
 /*
  * srt_to_pango_markup
  * -------------------
@@ -418,13 +432,13 @@ static int nearest_palette_index_display(uint32_t *palette, int npal, double rd,
  * string; the caller must free it.
  */
 char* srt_to_pango_markup(const char *srt_text) {
-    if (!srt_text) return strdup("");
+    if (!srt_text) return alloc_empty_string();
     size_t input_len = strlen(srt_text);
     /* conservative expansion factor (entities + markup) */
     size_t maxlen = input_len * 4 + 32;
     if (maxlen < 128) maxlen = 128;
     char *buf = (char*)malloc(maxlen);
-    if (!buf) return strdup("");
+    if (!buf) return alloc_empty_string();
     char *out = buf;
     const char *p = srt_text;
     while (*p) {
@@ -432,14 +446,52 @@ char* srt_to_pango_markup(const char *srt_text) {
         if (used + 16 >= maxlen) break; /* keep some slack for worst-case writes */
         size_t remaining = maxlen - used;
 
-        if ((strncmp(p, "<i>", 3) == 0) || (strncmp(p, "</i>", 4) == 0) ||
-            (strncmp(p, "<b>", 3) == 0) || (strncmp(p, "</b>", 4) == 0) ||
-            (strncmp(p, "<u>", 3) == 0) || (strncmp(p, "</u>", 4) == 0)) {
-            /* Pass-through of simple inline tags */
-            int len = (*p == '<' && *(p+1) == '/') ? 4 : 3;
-            if (remaining <= (size_t)len) break;
-            memcpy(out, p, (size_t)len);
-            out += len; p += len;
+        if (strncasecmp(p, "<i>", 3) == 0) {
+            const char *tag = "<span style=\"italic\">";
+            size_t tlen = strlen(tag);
+            if (remaining <= tlen) break;
+            memcpy(out, tag, tlen);
+            out += tlen; p += 3;
+            continue;
+        }
+        else if (strncasecmp(p, "</i>", 4) == 0) {
+            const char *tag = "</span>";
+            size_t tlen = strlen(tag);
+            if (remaining <= tlen) break;
+            memcpy(out, tag, tlen);
+            out += tlen; p += 4;
+            continue;
+        }
+        else if (strncasecmp(p, "<b>", 3) == 0) {
+            const char *tag = "<span weight=\"bold\">";
+            size_t tlen = strlen(tag);
+            if (remaining <= tlen) break;
+            memcpy(out, tag, tlen);
+            out += tlen; p += 3;
+            continue;
+        }
+        else if (strncasecmp(p, "</b>", 4) == 0) {
+            const char *tag = "</span>";
+            size_t tlen = strlen(tag);
+            if (remaining <= tlen) break;
+            memcpy(out, tag, tlen);
+            out += tlen; p += 4;
+            continue;
+        }
+        else if (strncasecmp(p, "<u>", 3) == 0) {
+            const char *tag = "<span underline=\"single\">";
+            size_t tlen = strlen(tag);
+            if (remaining <= tlen) break;
+            memcpy(out, tag, tlen);
+            out += tlen; p += 3;
+            continue;
+        }
+        else if (strncasecmp(p, "</u>", 4) == 0) {
+            const char *tag = "</span>";
+            size_t tlen = strlen(tag);
+            if (remaining <= tlen) break;
+            memcpy(out, tag, tlen);
+            out += tlen; p += 4;
             continue;
         }
         else if (strncasecmp(p, "<font ", 6) == 0) {
@@ -519,6 +571,7 @@ char* srt_to_pango_markup(const char *srt_text) {
 Bitmap render_text_pango(const char *markup,
                           int disp_w, int disp_h,
                           int fontsize, const char *fontfam,
+                          const char *fontstyle,
                           const char *fgcolor,
                           const char *outlinecolor,
                           const char *shadowcolor,
@@ -597,10 +650,25 @@ Bitmap render_text_pango(const char *markup,
     }
 
     /* Create common font description */
-    desc = pango_font_description_new();
-    if (!desc) goto final_cleanup;
-    pango_font_description_set_family(desc, fontfam ? fontfam : "Lato");
+    const char *base_family = (fontfam && *fontfam) ? fontfam : "DejaVu Sans";
+    char *desc_string = NULL;
+    if (fontstyle && *fontstyle) {
+        size_t len = strlen(base_family) + 1 + strlen(fontstyle) + 1;
+        desc_string = malloc(len);
+        if (desc_string)
+            snprintf(desc_string, len, "%s %s", base_family, fontstyle);
+    }
+    if (desc_string)
+        desc = pango_font_description_from_string(desc_string);
+    if (!desc)
+        desc = pango_font_description_from_string(base_family);
+    if (!desc) {
+        desc = pango_font_description_new();
+        if (!desc) goto final_cleanup;
+        pango_font_description_set_family(desc, base_family);
+    }
     pango_font_description_set_absolute_size(desc, fontsize * PANGO_SCALE);
+    free(desc_string);
 
     /* --- Dummy layout for measurement --- */
     dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
@@ -698,8 +766,14 @@ Bitmap render_text_pango(const char *markup,
 
     // Shadow first: make the offset proportional to supersample / fontsize
     if (shadowcolor) {
-        double shadow_off = (double)ss * (fontsize * 0.04);
-        if (shadow_off < ss) shadow_off = ss; // at least ss pixels
+        /* Compute shadow offset in user-space units; a prior change
+         * multiplied by `ss` here which double-applied the earlier
+         * cairo_scale() and produced an overly large shadow translate.
+         * Keep a small minimum of 1.0 user unit so very small fonts
+         * still get a visible shadow. The CTM (scale) already maps
+         * this to device pixels. */
+        double shadow_off = (fontsize * 0.04);
+        if (shadow_off < 1.0) shadow_off = 1.0; /* at least 1 user unit */
         cairo_save(cr);
         cairo_translate(cr, shadow_off, shadow_off);
         cairo_set_source_rgba(cr, sr, sg, sb, sa);
@@ -1207,6 +1281,8 @@ Bitmap render_text_pango(const char *markup,
     double fg_disp_r = fr * fa * 255.0;
     double fg_disp_g = fg * fa * 255.0;
     double fg_disp_b = fb * fa * 255.0;
+    int fg_palette_idx = nearest_palette_index_display(bm.palette, 16,
+                                                       fg_disp_r, fg_disp_g, fg_disp_b, 255);
 
     /* Apply Floyd–Steinberg error-diffusion dithering to reduce banding and
      * blockiness when mapping down to the limited 16-color palette. We keep
@@ -1245,9 +1321,15 @@ Bitmap render_text_pango(const char *markup,
              * premultiplied ARGB). Operating in display space avoids halos
              * when compositing semi-transparent pixels into the 16-color
              * palette. Errors are propagated in display units (0..255). */
-            double rd = (double)((argb >> 16) & 0xFF) + err_r_cur[xx+1];
-            double gd = (double)((argb >> 8) & 0xFF) + err_g_cur[xx+1];
-            double bd = (double)(argb & 0xFF) + err_b_cur[xx+1];
+            if (a >= 220) {
+                bm.idxbuf[yy*w+xx] = fg_palette_idx;
+                err_r_cur[xx+1] = err_g_cur[xx+1] = err_b_cur[xx+1] = 0.0;
+                continue;
+            }
+            bool skip_diffuse = (a >= 210);
+            double rd = (double)((argb >> 16) & 0xFF) + (skip_diffuse ? 0.0 : err_r_cur[xx+1]);
+            double gd = (double)((argb >> 8) & 0xFF) + (skip_diffuse ? 0.0 : err_g_cur[xx+1]);
+            double bd = (double)(argb & 0xFF) + (skip_diffuse ? 0.0 : err_b_cur[xx+1]);
             if (rd < 0) rd = 0; 
             if (rd > 255) rd = 255;
             if (gd < 0) gd = 0; 
@@ -1256,21 +1338,43 @@ Bitmap render_text_pango(const char *markup,
             if (bd > 255) bd = 255;
             /* Bias semi-transparent glyph edge pixels toward foreground
              * display color to reduce dark halos when quantizing to 16 colors. */
-            if (a > 24 && a < 255) {
-                double an = (double)a / 255.0;
-                double bias = pow(an, 1.05) * 0.6; /* tuned base */
-                /* Reduce bias at higher SSAA for HD/UHD: strong SSAA needs less artificial bias.
-                 * For SD (disp_h <= 576) keep bias stronger to avoid eaten-out strokes. */
-                if (disp_h > 576) bias *= (3.0 / (double)ss);
-                if (bias > 0.92) bias = 0.92;
-                if (disp_h <= 576) {
-                    if (bias < 0.12) bias = 0.12; /* stronger minimum bias on SD */
-                } else {
-                    if (bias < 0.05) bias = 0.05; /* keep a tiny bias for very soft edges on HD/UHD */
+            if (!skip_diffuse && a > 24 && a < 255) {
+                double rd_orig = rd;
+                double gd_orig = gd;
+                double bd_orig = bd;
+                double diff_fg = fabs(rd_orig - fg_disp_r) +
+                                 fabs(gd_orig - fg_disp_g) +
+                                 fabs(bd_orig - fg_disp_b);
+                if (diff_fg < 96.0) {
+                    double an = (double)a / 255.0;
+                    double bias = pow(an, 1.05) * 0.6; /* tuned base */
+                    /* Reduce bias at higher SSAA for HD/UHD: strong SSAA needs less artificial bias.
+                     * For SD (disp_h <= 576) keep bias stronger to avoid eaten-out strokes. */
+                    if (disp_h > 576) bias *= (3.0 / (double)ss);
+                    if (bias > 0.92) bias = 0.92;
+                    if (disp_h <= 576) {
+                        if (bias < 0.12) bias = 0.12; /* stronger minimum bias on SD */
+                    } else {
+                        if (bias < 0.05) bias = 0.05; /* keep a tiny bias for very soft edges on HD/UHD */
+                    }
+                    /* Heavy dithering on nearly-opaque pixels can still leave
+                     * noticeable speckling when there is essentially no color
+                     * variation. If the display-space distance from the
+                     * foreground color is tiny, snap directly to the target
+                     * foreground to remove residual dark specks inside glyphs. */
+                    double diff_fg2 = fabs(rd_orig - fg_disp_r) +
+                                      fabs(gd_orig - fg_disp_g) +
+                                      fabs(bd_orig - fg_disp_b);
+                    if (diff_fg2 < 24.0) {
+                        rd = fg_disp_r;
+                        gd = fg_disp_g;
+                        bd = fg_disp_b;
+                    } else {
+                        rd = rd * (1.0 - bias) + fg_disp_r * bias;
+                        gd = gd * (1.0 - bias) + fg_disp_g * bias;
+                        bd = bd * (1.0 - bias) + fg_disp_b * bias;
+                    }
                 }
-                rd = rd * (1.0 - bias) + fg_disp_r * bias;
-                gd = gd * (1.0 - bias) + fg_disp_g * bias;
-                bd = bd * (1.0 - bias) + fg_disp_b * bias;
             }
             /* Find nearest palette entry in display space (accounts for
              * palette entry alpha when computing visual color). */
@@ -1289,24 +1393,31 @@ Bitmap render_text_pango(const char *markup,
             double err_g = gd - pg;
             double err_b = bd - pb;
 
+            if (skip_diffuse) {
+                err_r = err_g = err_b = 0.0;
+                err_r_cur[xx+1] = err_g_cur[xx+1] = err_b_cur[xx+1] = 0.0;
+            }
+
             /* Distribute errors: FS weights: right 7/16, down-left 3/16, down 5/16, down-right 1/16 */
-            if (xx + 1 < w) {
-                err_r_cur[xx+2] += err_r * (7.0/16.0);
-                err_g_cur[xx+2] += err_g * (7.0/16.0);
-                err_b_cur[xx+2] += err_b * (7.0/16.0);
-            }
-            if (xx - 1 >= 0) {
-                err_r_next[xx] += err_r * (3.0/16.0);
-                err_g_next[xx] += err_g * (3.0/16.0);
-                err_b_next[xx] += err_b * (3.0/16.0);
-            }
-            err_r_next[xx+1] += err_r * (5.0/16.0);
-            err_g_next[xx+1] += err_g * (5.0/16.0);
-            err_b_next[xx+1] += err_b * (5.0/16.0);
-            if (xx + 1 < w) {
-                err_r_next[xx+2] += err_r * (1.0/16.0);
-                err_g_next[xx+2] += err_g * (1.0/16.0);
-                err_b_next[xx+2] += err_b * (1.0/16.0);
+            if (!skip_diffuse) {
+                if (xx + 1 < w) {
+                    err_r_cur[xx+2] += err_r * (7.0/16.0);
+                    err_g_cur[xx+2] += err_g * (7.0/16.0);
+                    err_b_cur[xx+2] += err_b * (7.0/16.0);
+                }
+                if (xx - 1 >= 0) {
+                    err_r_next[xx] += err_r * (3.0/16.0);
+                    err_g_next[xx] += err_g * (3.0/16.0);
+                    err_b_next[xx] += err_b * (3.0/16.0);
+                }
+                err_r_next[xx+1] += err_r * (5.0/16.0);
+                err_g_next[xx+1] += err_g * (5.0/16.0);
+                err_b_next[xx+1] += err_b * (5.0/16.0);
+                if (xx + 1 < w) {
+                    err_r_next[xx+2] += err_r * (1.0/16.0);
+                    err_g_next[xx+2] += err_g * (1.0/16.0);
+                    err_b_next[xx+2] += err_b * (1.0/16.0);
+                }
             }
         }
 

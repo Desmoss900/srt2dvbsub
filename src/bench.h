@@ -104,6 +104,9 @@ typedef struct {
     /** Accumulated time spent muxing packets into output (microseconds). */
     int64_t t_mux_us;
 
+    /** Accumulated time spent muxing subtitle packets we generate (microseconds). */
+    int64_t t_mux_sub_us;
+
     /** Number of subtitle cues rendered. */
     int cues_rendered;
 
@@ -112,6 +115,9 @@ typedef struct {
 
     /** Number of packets written to the output. */
     int packets_muxed;
+
+    /** Number of subtitle packets written to the output. */
+    int packets_muxed_sub;
 } BenchStats;
 
 /**
@@ -119,8 +125,8 @@ typedef struct {
  *
  * A single global accumulator used by the bench helpers. It is
  * zero-initialized by default. Callers may set `bench.enabled = 1` to
- * enable reporting. Access is not synchronized; protect updates when
- * accessed from multiple threads.
+ * enable reporting. Direct field updates require external synchronization,
+ * but the helper functions in this module already take an internal lock.
  *
  * Example:
  * @code
@@ -176,5 +182,20 @@ int64_t bench_now(void);
  * @endcode
  */
 void bench_report(void);
+
+/* Thread-safe bench update helpers. Use these when updating global
+ * bench counters from worker threads to avoid data races. Each helper
+ * acquires the internal mutex, applies a saturated update (clamping at
+ * INT_MAX for counters) and then releases the lock. */
+void bench_add_encode_us(int64_t us);
+void bench_add_mux_us(int64_t us);
+void bench_add_mux_sub_us(int64_t us);
+void bench_add_parse_us(int64_t us);
+void bench_add_render_us(int64_t us);
+void bench_inc_cues_encoded(void);
+void bench_inc_packets_muxed(void);
+void bench_inc_packets_muxed_sub(void);
+void bench_inc_cues_rendered(void);
+void bench_set_enabled(int enabled);
 
 #endif

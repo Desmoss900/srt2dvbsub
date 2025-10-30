@@ -50,6 +50,7 @@
 
 #include "srt_parser.h"
 #include <stdio.h>
+#include <stdatomic.h>
 
 /**
  * @file qc.h
@@ -82,7 +83,7 @@ void qc_check_entry(const char *filename, int index,
  * Global counter of QC-level ERROR messages emitted by qc_check_entry().
  * Call qc_reset_counts() to reset to zero before a batch run.
  */
-extern int qc_error_count;
+extern atomic_int qc_error_count;
 
 /**
  * Reset internal QC counters (errors). Useful when running batch QC-only

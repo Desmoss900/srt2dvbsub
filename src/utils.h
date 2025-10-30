@@ -45,89 +45,83 @@
 * ────────────────────────────────────────────────────────────────
 */
 
-#ifndef SRT2DVB_RUNTIME_OPTS_H
-#define SRT2DVB_RUNTIME_OPTS_H
+#pragma once
+#ifndef UTILS_H
+#define UTILS_H
+
+#include <signal.h>
 
 /**
- * @file runtime_opts.h
- * @brief Global runtime-configurable options used by the application.
+ * @brief Prints the version information of the program to the standard output.
  *
- * These globals are populated (with defaults) in `runtime_opts.c` and may be
- * overridden by command-line parsing in `main.c`. They are intentionally
- * simple globals to keep option access convenient across the codebase.
- *
- * Thread-safety: the variables are read-mostly after initialization. Any
- * runtime mutation must be synchronized by the caller.
+ * This function outputs the current version details, such as version number and
+ * possibly build information, to the console. It does not take any parameters
+ * and does not return any value.
  */
+void print_version(void);
 
 /**
- * @brief Number of encoder threads to be used.
+ * @brief Prints the help message to the standard output.
  *
- * This external variable specifies how many threads should be allocated
- * for encoding operations. It can be set to optimize performance based
- * on available hardware resources.
+ * This function displays usage instructions and available options
+ * for the program to assist users.
  */
- extern int enc_threads;
+void print_help(void);
 
 /**
- * @brief Number of threads used for rendering operations.
+ * @brief Prints the license information to the standard output.
  *
- * This external integer variable specifies how many threads
- * are allocated for rendering tasks. It can be set to optimize
- * performance based on available system resources.
+ * This function outputs the software license details, such as copyright
+ * and usage terms, to the console. It does not take any parameters and
+ * does not return a value.
  */
-extern int render_threads;
+void print_license(void);
 
 /**
- * @brief Overrides the default SSAA (Super-Sampling Anti-Aliasing) setting.
+ * @brief Prints the usage information for the program to the standard output.
  *
- * This external integer variable can be used to force a specific SSAA configuration
- * at runtime, bypassing the default or configured value.
- *
- * @note The exact effect depends on how this variable is used in the implementation.
+ * This function displays instructions on how to use the program, including
+ * available command-line options and their descriptions.
  */
-extern int ssaa_override;
+void print_usage(void);
 
 /**
- * @brief Global flag to disable the unsharp filter.
+ * Calculates the display width of a UTF-8 encoded string.
  *
- * When set to a non-zero value, the unsharp filter will be disabled in the runtime.
- * This variable is typically set via command-line options or configuration files.
+ * This function determines how many columns the input string `s` will occupy
+ * when displayed, taking into account multi-byte UTF-8 characters and their
+ * respective display widths.
+ *
+ * @param s A pointer to a null-terminated UTF-8 encoded string.
+ * @return The number of display columns required for the string.
  */
-extern int no_unsharp;
+int utf8_display_width(const char *s);
 
 /**
- * @brief Global variable to control the level of debug output.
+ * Replaces the string pointed to by dest with a duplicate of src.
  *
- * The value of debug_level determines the verbosity of debug messages
- * throughout the application. Higher values enable more detailed logging.
+ * Frees the memory pointed to by *dest (if not NULL), allocates new memory,
+ * and copies the contents of src into it. Updates *dest to point to the new string.
+ *
+ * @param dest Pointer to the destination string pointer to be replaced.
+ * @param src  Source string to duplicate.
+ * @return     0 on success, non-zero on failure (e.g., memory allocation error).
  */
-extern int debug_level;
+int replace_strdup(const char **dest, const char *src);
+int replace_strdup_owned(const char **dest, const char *src);
 
 /**
- * Indicates whether ASS (Advanced SubStation Alpha) subtitle support is enabled.
- * 
- * When set to a non-zero value, the application will use ASS subtitles.
- * When set to zero, ASS subtitles are disabled.
- */
-extern int use_ass;
-
-/**
- * @brief External variable representing the width of the video.
+ * @brief Handles a signal by setting a stop request flag.
  *
- * This variable is declared as an external integer and is expected to be
- * defined elsewhere in the program. It typically holds the width (in pixels)
- * of the video being processed or displayed.
- */
-extern int video_w;
-
-/**
- * @brief Height of the video frame in pixels.
+ * This function is intended to be used as a signal handler. When invoked,
+ * it sets the value pointed to by stop_requested to indicate that a stop
+ * has been requested, typically in response to signals such as SIGINT or SIGTERM.
  *
- * This external integer variable specifies the vertical resolution (height)
- * of the video frame. It is typically set during runtime configuration and
- * used throughout the application wherever video frame dimensions are required.
+ * @param sig The signal number received.
+ * @param stop_requested Pointer to a sig_atomic_t flag that will be set to request stopping.
  */
-extern int video_h;
+void handle_signal(int sig, volatile sig_atomic_t *stop_requested);
 
-#endif /* SRT2DVB_RUNTIME_OPTS_H */
+int validate_path_length(const char *path, const char *label);
+
+#endif

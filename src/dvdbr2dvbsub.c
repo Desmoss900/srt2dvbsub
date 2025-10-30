@@ -73,6 +73,7 @@
 #include "qc.h"
 #include "bench.h"
 #include "mux_write.h"
+#include "utils.h"
 
 
 /* Provide a short module name for LOG() */
@@ -99,13 +100,92 @@ typedef struct {
     int64_t first_subtitle_pts90;
 } GraphicSubTrack;
 
-int debug_level = 0; // Global debug level
-int video_w=720, video_h=480; //Set the min video width and height...this will be overridden by libav probe
 static int __dbg_png_seq = 0;
+
+static void bitmap_release(Bitmap *bm)
+{
+    if (!bm) return;
+    if (bm->idxbuf) { av_free(bm->idxbuf); bm->idxbuf = NULL; }
+    if (bm->palette) { av_free(bm->palette); bm->palette = NULL; }
+    bm->nb_colors = 0;
+    bm->palette_bytes = 0;
+    bm->idxbuf_len = 0;
+    bm->w = bm->h = bm->x = bm->y = 0;
+}
+
+static void subevent_release(SubEvent *ev)
+{
+    if (!ev) return;
+    bitmap_release(&ev->bm);
+    ev->start_display_time = 0;
+    ev->end_display_time = 0;
+}
+
+static void graphic_subtrack_clear(GraphicSubTrack *track)
+{
+    if (!track) return;
+    if (track->events) {
+        for (int i = 0; i < track->count; i++) subevent_release(&track->events[i]);
+        free(track->events);
+        track->events = NULL;
+    }
+    track->count = 0;
+    if (track->codec_ctx) {
+        avcodec_free_context(&track->codec_ctx);
+        track->codec_ctx = NULL;
+    }
+    if (track->dec_ctx) {
+        avcodec_free_context(&track->dec_ctx);
+        track->dec_ctx = NULL;
+    }
+    if (track->lang) {
+        free((void*)track->lang);
+        track->lang = NULL;
+    }
+    track->forced = 0;
+    track->hi = 0;
+    track->last_pts = AV_NOPTS_VALUE;
+    track->effective_delay_ms = 0;
+    track->first_subtitle_pts90 = AV_NOPTS_VALUE;
+    track->stream = NULL;
+}
+
+static void print_dvdbr_usage(void)
+{
+    printf("Usage: dvdbr2dvbsub --input in.ts --output out.ts --languages eng[,deu] [options]\n");
+    printf("Try 'dvdbr2dvbsub --help' for more information.\n");
+}
+
+static void print_dvdbr_help(void)
+{
+    print_version();
+    printf("Usage: dvdbr2dvbsub --input in.ts --output out.ts --languages eng[,deu] [options]\n\n");
+    printf("Options:\n");
+    printf("  -I, --input FILE            Input Media (ts, mkv, mp4)\n");
+    printf("  -o, --output FILE           Output TS file with DVB subtitles muxed in\n");
+    printf("  -l, --languages CODES       Comma-separated DVB language codes\n");
+    printf("      --src-fps FPS           Override detected source frame rate\n");
+    printf("      --dst-fps FPS           Target frame rate when remapping PTS\n");
+    printf("      --delay MS              Global subtitle delay in milliseconds\n");
+    printf("      --forced                Mark output subtitles as forced\n");
+    printf("      --hi                    Mark output subtitles as hearing-impaired\n");    
+    printf("      --debug N               Set libav debug verbosity (0..2)\n");
+    printf("      --bench                 Enable benchmark timing output\n");
+    printf("      --version               Show version information and exit\n");
+    printf("  -h, --help                  Show this help text and exit\n\n");
+    printf("Examples:\n");
+    printf("  dvdbr2dvbsub --input main.ts --output muxed.ts --languages eng,deu\n");
+    printf("  dvdbr2dvbsub --input bd.m2ts --output out.ts --languages eng --delay 150\n");
+    printf("  dvdbr2dvbsub --input bd.m2ts --qc-only --srt captions.srt --languages eng\n");
+    printf("\n");
+}
 
 /* signal handling: set this flag in the handler and check in main loops */
 static volatile sig_atomic_t stop_requested = 0;
-static void handle_signal(int sig) { (void)sig; stop_requested = 1; }
+static void dvdbr_signal_request_stop(int sig)
+{
+    handle_signal(sig, &stop_requested);
+}
 
 // Convert an RGBA plane to an indexed buffer with up-to-16-color palette.
 static void rgba_to_indexed(uint8_t *rgba, int linesize, int w, int h,
@@ -221,7 +301,10 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
 
     int64_t t_enc = bench_now();
     int size = avcodec_encode_subtitle(ctx, tmpbuf, SUB_BUF_SIZE, sub);
-    if (bench_mode) bench.t_encode_us += bench_now() - t_enc;
+    if (bench_mode) {
+        int64_t delta = bench_now() - t_enc;
+        bench_add_encode_us(delta);
+    }
     if (debug_level > 0) LOG(1, "avcodec_encode_subtitle returned %d\n", size);
     if (size > 0 && debug_level >= 2) {
         int dump = size > 32 ? 32 : size;
@@ -231,6 +314,8 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
     }
 
     if (size > 0) {
+        if (bench_mode)
+            bench_inc_cues_encoded();
         AVPacket *pkt = av_packet_alloc();
         if (!pkt) {
             av_free(tmpbuf);
@@ -255,7 +340,7 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
         av_packet_rescale_ts(pkt, (AVRational){1,90000}, track->stream->time_base);
 
         int64_t t0 = bench_now();
-    int ret = safe_av_interleaved_write_frame(out_fmt, pkt);
+        int ret = safe_av_interleaved_write_frame(out_fmt, pkt);
         if (debug_level > 0) {
             if (ret < 0) {
                 char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
@@ -272,9 +357,10 @@ static void encode_and_write_subtitle(AVCodecContext *ctx,
             if (debug_level > 0) LOG(1, "after write avio_tell=%lld\n", (long long)pos);
         }
         if (bench_mode) {
-            bench.t_mux_us += bench_now() - t0;
-            bench.cues_encoded++;
-            bench.packets_muxed++;
+            int64_t delta = bench_now() - t0;
+            bench_add_mux_us(delta);
+            if (ret >= 0)
+                bench_inc_packets_muxed();
         }
         av_packet_free(&pkt);
     } else {
@@ -301,31 +387,52 @@ int main(int argc, char **argv) {
         {"delay",     required_argument, 0, 1012},
         {"src-fps",   required_argument, 0, 1013},
         {"dst-fps",   required_argument, 0, 1014},
+        {"version",   no_argument,       0, 1015},
+        {"help",      no_argument,       0, 'h'},
         {0,0,0,0}
     };
 
     int opt, long_index=0;
-    while ((opt=getopt_long(argc,argv,"I:o:s:l:",long_opts,&long_index))!=-1) {
+    while ((opt=getopt_long(argc,argv,"I:o:s:l:h",long_opts,&long_index))!=-1) {
         switch(opt) {
         case 'I': input=optarg; break;
         case 'o': output=optarg; break;
-        case 's': srt_list=strdup(optarg); break;
-        case 'l': lang_list=strdup(optarg); break;
+        case 's':
+            srt_list = strdup(optarg);
+            if (!srt_list) {
+                fprintf(stderr, "Error: out of memory duplicating --srt argument\n");
+                return 1;
+            }
+            break;
+        case 'l':
+            lang_list = strdup(optarg);
+            if (!lang_list) {
+                fprintf(stderr, "Error: out of memory duplicating --languages argument\n");
+                return 1;
+            }
+            break;
         case 1000: forced=1; break;
         case 1001: hi=1; break;
         case 1002: debug_level=atoi(optarg); break;
         case 1004: bench_mode=1; break;
         case 1012: subtitle_delay_ms = atoi(optarg); break;
     case 1013: src_fps = atof(optarg); break;
-    case 1014: dst_fps = atof(optarg); break;
+        case 1014: dst_fps = atof(optarg); break;
+        case 1015:
+            print_version();
+            return 0;
+        case 'h':
+            print_dvdbr_help();
+            return 0;
         default:
-            fprintf(stderr, "Usage: dvdbr2dvbsub --input in --output out --languages eng[,deu] [--forced] [--hi] [--debug N]\n");
+            print_dvdbr_usage();
             return 1;
         }
     }
 
     if(!input||!output||!lang_list){
         fprintf(stderr,"Error: --input, --output and --languages are required\n");
+        print_dvdbr_usage();
         return 1;
     }
 
@@ -337,6 +444,7 @@ int main(int argc, char **argv) {
         av_log_set_level(AV_LOG_QUIET);
 
     bench_start();
+    bench_set_enabled(bench_mode);
 
     // Progress tracking
     time_t prog_start_time = time(NULL);
@@ -345,17 +453,22 @@ int main(int argc, char **argv) {
     long pkt_count = 0;
     long subs_found = 0;
 
+    int ret = 0;
     FILE *qc = NULL;
+    int ntracks = 0;
+    GraphicSubTrack tracks[8] = {0};
+    AVPacket *pkt = NULL;
+#define FAIL(code) do { ret = (code); goto cleanup; } while (0)
     if (qc_only) {
         qc = fopen("qc_log.txt", "w");
-        if (!qc) { perror("qc_log.txt"); return 1; }
+        if (!qc) { perror("qc_log.txt"); FAIL(1); }
     }
 
     // Open input
     avformat_network_init();
     AVFormatContext *in_fmt=NULL;
     if(avformat_open_input(&in_fmt,input,NULL,NULL)<0){
-        fprintf(stderr,"Cannot open input\n"); return -1;
+        fprintf(stderr,"Cannot open input\n"); FAIL(-1);
     }
     avformat_find_stream_info(in_fmt,NULL);
 
@@ -461,14 +574,13 @@ int main(int argc, char **argv) {
     AVFormatContext *out_fmt = NULL;
     if (avformat_alloc_output_context2(&out_fmt, NULL, "mpegts", output) < 0) {
         fprintf(stderr, "Cannot alloc out_fmt\n");
-        return -1;
+        FAIL(-1);
     }
 
-    int ntracks=0; GraphicSubTrack tracks[8];
     const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_DVB_SUBTITLE);
     if (!codec) {
         fprintf(stderr,"DVB subtitle encoder not found\n");
-        return -1;
+        FAIL(-1);
     }
     if (debug_level > 0) fprintf(stderr, "Found DVB subtitle encoder: %p\n", (void*)codec);
 
@@ -480,7 +592,13 @@ int main(int argc, char **argv) {
 
         if (debug_level > 0) fprintf(stderr, "Starting processing subtitle stream %d (lang=%s)\n", sub_idx, lang);
 
-        tracks[ntracks].lang = strdup(lang);
+        const char *lang_src = lang ? lang : "und";
+        tracks[ntracks].lang = strdup(lang_src);
+        if (!tracks[ntracks].lang) {
+            fprintf(stderr, "Error: out of memory duplicating subtitle track language\n");
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
+        }
         tracks[ntracks].forced = forced;
         tracks[ntracks].hi = hi;
         tracks[ntracks].last_pts = AV_NOPTS_VALUE;
@@ -491,17 +609,20 @@ int main(int argc, char **argv) {
         tracks[ntracks].dec_ctx = avcodec_alloc_context3(NULL);
         if (!tracks[ntracks].dec_ctx) {
             fprintf(stderr, "Failed to alloc subtitle decoder context\n");
-            return -1;
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
         }
         avcodec_parameters_to_context(tracks[ntracks].dec_ctx, sub_st->codecpar);
         const AVCodec *sub_decoder = avcodec_find_decoder(sub_st->codecpar->codec_id);
         if (!sub_decoder) {
             fprintf(stderr, "Subtitle decoder not found for codec %d\n", sub_st->codecpar->codec_id);
-            return -1;
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
         }
         if (avcodec_open2(tracks[ntracks].dec_ctx, sub_decoder, NULL) < 0) {
             fprintf(stderr, "Failed to open subtitle decoder\n");
-            return -1;
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
         }
 
         // No pre-collection: events will be decoded/converted/encoded on-the-fly in the demux loop
@@ -510,6 +631,11 @@ int main(int argc, char **argv) {
 
         // Create output subtitle stream
         tracks[ntracks].stream = avformat_new_stream(out_fmt, NULL);
+        if (!tracks[ntracks].stream) {
+            fprintf(stderr, "Failed to create output stream for track %s\n", lang);
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
+        }
         tracks[ntracks].stream->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
         tracks[ntracks].stream->codecpar->codec_id = AV_CODEC_ID_DVB_SUBTITLE;
         tracks[ntracks].stream->time_base = (AVRational){1,90000};
@@ -522,7 +648,8 @@ int main(int argc, char **argv) {
         tracks[ntracks].codec_ctx = avcodec_alloc_context3(codec);
         if (!tracks[ntracks].codec_ctx) {
             fprintf(stderr, "Failed to alloc codec context for track %s\n", lang);
-            return -1;
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
         }
         tracks[ntracks].codec_ctx->time_base = (AVRational){1,90000};
         tracks[ntracks].codec_ctx->width = video_w;
@@ -542,7 +669,8 @@ int main(int argc, char **argv) {
 
     if (avcodec_open2(tracks[ntracks].codec_ctx, codec, NULL) < 0) {
             fprintf(stderr, "Failed to open DVB subtitle encoder for track %s\n", lang);
-            return -1;
+            graphic_subtrack_clear(&tracks[ntracks]);
+            FAIL(-1);
         }
 
         // Copy codec parameters from encoder context to the output stream so muxer knows stream params
@@ -563,13 +691,13 @@ int main(int argc, char **argv) {
     if (!(out_fmt->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&out_fmt->pb, output, AVIO_FLAG_WRITE) < 0) {
             fprintf(stderr, "Error: could not open output file %s\n", output);
-            return -1;
+            FAIL(-1);
         }
     }
 
     if (avformat_write_header(out_fmt, NULL) < 0) {
         fprintf(stderr, "Error: could not write header for output file\n");
-        return -1;
+        FAIL(-1);
     }
     /* If there is no video stream, emit a tiny blank subtitle at PTS=1 so
      * the output stream start_time is initialized. If there is a video
@@ -591,12 +719,13 @@ int main(int argc, char **argv) {
     /* Install simple signal handlers so Ctrl-C triggers orderly shutdown */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_signal;
+    sa.sa_handler = dvdbr_signal_request_stop;
+    sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
     // Single demux loop: decode subtitle packets for tracked streams and encode/write immediately
-    AVPacket *pkt = av_packet_alloc();
+    pkt = av_packet_alloc();
     AVSubtitle sub;
     while (av_read_frame(in_fmt, pkt) >= 0) {
         if (stop_requested) {
@@ -666,9 +795,9 @@ int main(int argc, char **argv) {
             if (pkt->stream_index == in_fmt->streams[sub_stream_indices[ti]]->index) {
                 if (debug_level > 0) fprintf(stderr, "Read packet stream %d (subtitle), size %d\n", pkt->stream_index, pkt->size);
                 int got_sub = 0;
-                int ret = avcodec_decode_subtitle2(tracks[ti].dec_ctx, &sub, &got_sub, pkt);
-                if (debug_level > 0) fprintf(stderr, "Decode ret %d, got_sub %d (track %d)\n", ret, got_sub, ti);
-                if (ret >= 0 && got_sub) {
+                int dec_ret = avcodec_decode_subtitle2(tracks[ti].dec_ctx, &sub, &got_sub, pkt);
+                if (debug_level > 0) fprintf(stderr, "Decode ret %d, got_sub %d (track %d)\n", dec_ret, got_sub, ti);
+                if (dec_ret >= 0 && got_sub) {
                     subs_found++;
                     // Convert to Bitmap and encode immediately
                     Bitmap bm = {0};
@@ -934,9 +1063,6 @@ int main(int argc, char **argv) {
         av_packet_unref(pkt);
     }
 
-    /* free the packet we allocated for demuxing */
-    if (pkt) av_packet_free(&pkt);
-
     // Flush decoders for remaining subtitles
     for (int ti = 0; ti < ntracks; ti++) {
     AVSubtitle flush_sub;
@@ -947,8 +1073,8 @@ int main(int argc, char **argv) {
     /* ensure data/size are explicit */
     empty_pkt.data = NULL;
     empty_pkt.size = 0;
-    int ret = avcodec_decode_subtitle2(tracks[ti].dec_ctx, &flush_sub, &got_sub, &empty_pkt);
-        if (ret >= 0 && got_sub) {
+    int dec_ret = avcodec_decode_subtitle2(tracks[ti].dec_ctx, &flush_sub, &got_sub, &empty_pkt);
+        if (dec_ret >= 0 && got_sub) {
             Bitmap bm = {0};
             if (flush_sub.num_rects > 0) {
                 AVSubtitleRect *r = flush_sub.rects[0];
@@ -1150,38 +1276,36 @@ int main(int argc, char **argv) {
     }
 
     av_write_trailer(out_fmt);
-
-    for (int t=0; t<ntracks; t++) {
-        if (tracks[t].codec_ctx)
-            avcodec_free_context(&tracks[t].codec_ctx);
-        if (tracks[t].dec_ctx)
-            avcodec_free_context(&tracks[t].dec_ctx);
-        if (tracks[t].lang)
-            free((void*)tracks[t].lang);
-        if (tracks[t].events) {
-            for (int i=0; i<tracks[t].count; i++) {
-                if (tracks[t].events[i].bm.idxbuf) av_free(tracks[t].events[i].bm.idxbuf);
-                if (tracks[t].events[i].bm.palette) av_free(tracks[t].events[i].bm.palette);
-            }
-            free(tracks[t].events);
-        }
+    ret = 0;
+cleanup:
+    if (pkt) {
+        av_packet_free(&pkt);
+        pkt = NULL;
     }
-
-    /* close output IO if opened */
-    if (out_fmt && out_fmt->pb) avio_closep(&out_fmt->pb);
-    avformat_free_context(out_fmt);
-    avformat_close_input(&in_fmt);
-
-    /* deinit network layer if we initialized it */
+    for (int t = 0; t < ntracks; t++) {
+        graphic_subtrack_clear(&tracks[t]);
+    }
+    if (out_fmt) {
+        if (out_fmt->pb) avio_closep(&out_fmt->pb);
+        avformat_free_context(out_fmt);
+        out_fmt = NULL;
+    }
+    if (in_fmt) {
+        avformat_close_input(&in_fmt);
+        in_fmt = NULL;
+    }
     avformat_network_deinit();
-    if (qc) fclose(qc);
-
-    /* free duplicated option strings */
-    if (srt_list) free(srt_list);
-    if (lang_list) free(lang_list);
-
-    if(bench_mode) bench_report();
-    /* Ensure CLI prompt appears on a new line after program exit */
-    fprintf(stdout, "\n"); fflush(stdout);
-    return 0;
+    if (qc) {
+        fclose(qc);
+        qc = NULL;
+    }
+    if (srt_list) { free(srt_list); srt_list = NULL; }
+    if (lang_list) { free(lang_list); lang_list = NULL; }
+    if (ret == 0 && bench_mode) bench_report();
+    if (ret == 0) {
+        fprintf(stdout, "\n");
+        fflush(stdout);
+    }
+    return ret;
 }
+#undef FAIL

@@ -68,12 +68,93 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
+#include <sys/time.h>
+#include <pthread.h>
+#include <limits.h>
 
-/* Global benchmark accumulators. Zero-initialized by default. Clients
- * may toggle `bench.enabled` to start/stop reporting. Note: updates to
- * fields of this struct are not synchronized — callers should serialize
- * access if used concurrently. */
+/* Global benchmark accumulators. Zero-initialized by default and updated
+ * under `bench_mutex` for thread safety. */
 BenchStats bench = {0};
+
+/* Mutex to protect concurrent updates to the global bench counters. */
+static pthread_mutex_t bench_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void bench_add_encode_us(int64_t us) {
+    if (us <= 0) return;
+    pthread_mutex_lock(&bench_mutex);
+    bench.t_encode_us += us;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_add_mux_us(int64_t us) {
+    if (us <= 0) return;
+    pthread_mutex_lock(&bench_mutex);
+    bench.t_mux_us += us;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_add_mux_sub_us(int64_t us) {
+    if (us <= 0) return;
+    pthread_mutex_lock(&bench_mutex);
+    bench.t_mux_sub_us += us;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_add_parse_us(int64_t us) {
+    if (us <= 0) return;
+    pthread_mutex_lock(&bench_mutex);
+    bench.t_parse_us += us;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_add_render_us(int64_t us) {
+    if (us <= 0) return;
+    pthread_mutex_lock(&bench_mutex);
+    bench.t_render_us += us;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_inc_cues_encoded(void) {
+    pthread_mutex_lock(&bench_mutex);
+    if (bench.cues_encoded < INT_MAX)
+        bench.cues_encoded++;
+    else
+        bench.cues_encoded = INT_MAX;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_inc_packets_muxed(void) {
+    pthread_mutex_lock(&bench_mutex);
+    if (bench.packets_muxed < INT_MAX)
+        bench.packets_muxed++;
+    else
+        bench.packets_muxed = INT_MAX;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_inc_packets_muxed_sub(void) {
+    pthread_mutex_lock(&bench_mutex);
+    if (bench.packets_muxed_sub < INT_MAX)
+        bench.packets_muxed_sub++;
+    else
+        bench.packets_muxed_sub = INT_MAX;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_inc_cues_rendered(void) {
+    pthread_mutex_lock(&bench_mutex);
+    if (bench.cues_rendered < INT_MAX)
+        bench.cues_rendered++;
+    else
+        bench.cues_rendered = INT_MAX;
+    pthread_mutex_unlock(&bench_mutex);
+}
+
+void bench_set_enabled(int enabled) {
+    pthread_mutex_lock(&bench_mutex);
+    bench.enabled = enabled ? 1 : 0;
+    pthread_mutex_unlock(&bench_mutex);
+}
 
 
 /*
@@ -118,10 +199,9 @@ int64_t bench_now(void) {
  * startup when entering bench mode.
  */
 void bench_start(void) {
-    /* Use aggregate initialization to set all fields to zero in one
-     * atomic-looking assignment. Note: this does not provide thread
-     * safety; callers must synchronize access if used concurrently. */
+    pthread_mutex_lock(&bench_mutex);
     bench = (BenchStats){0};
+    pthread_mutex_unlock(&bench_mutex);
 }
 
 
@@ -134,19 +214,27 @@ void bench_start(void) {
  * function returns immediately.
  */
 void bench_report(void) {
+    pthread_mutex_lock(&bench_mutex);
+    BenchStats snapshot = bench;
+    pthread_mutex_unlock(&bench_mutex);
+
     /* If benchmarking is not enabled, do not print anything. */
-    if (!bench.enabled) return;
+    if (!snapshot.enabled) return;
 
     /* Print summary header and simple event counters. */
-    printf("\n--- Benchmark Report ---\n");
-    printf("Cues rendered: %d\n", bench.cues_rendered);
-    printf("Cues encoded: %d\n", bench.cues_encoded);
-    printf("Packets muxed: %d\n", bench.packets_muxed);
+    printf("\n\n--- Benchmark Report ---\n");
+    printf("Cues rendered: %d\n", snapshot.cues_rendered);
+    printf("Cues encoded: %d\n", snapshot.cues_encoded);
+    printf("Packets muxed: %d\n", snapshot.packets_muxed);
+    if (snapshot.packets_muxed_sub > 0)
+        printf("  of which subtitle packets: %d\n", snapshot.packets_muxed_sub);
 
     /* Convert accumulated microsecond totals to milliseconds for human
      * readability and print them with 3 decimal places. */
-    printf("Parse time:   %.3f ms\n", bench.t_parse_us / 1000.0);
-    printf("Render time:  %.3f ms\n", bench.t_render_us / 1000.0);
-    printf("Encode time:  %.3f ms\n", bench.t_encode_us / 1000.0);
-    printf("Mux time:     %.3f ms\n", bench.t_mux_us / 1000.0);
+    printf("Parse time:   %.3f ms\n", snapshot.t_parse_us / 1000.0);
+    printf("Render time:  %.3f ms\n", snapshot.t_render_us / 1000.0);
+    printf("Encode time:  %.3f ms\n", snapshot.t_encode_us / 1000.0);
+    printf("Mux time:     %.3f ms\n", snapshot.t_mux_us / 1000.0);
+    if (snapshot.packets_muxed_sub > 0)
+        printf("  Subtitle mux time: %.3f ms\n", snapshot.t_mux_sub_us / 1000.0);
 }

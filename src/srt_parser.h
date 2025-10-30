@@ -94,6 +94,22 @@ typedef struct {
 int parse_srt(const char *filename, SRTEntry **entries_out, FILE *qc);
 
 /*
+ * Parser configuration struct to avoid relying on external globals.
+ * New callers should prefer `parse_srt_cfg()` and pass an explicit
+ * configuration to make parsing deterministic and testable.
+ */
+typedef struct {
+    int use_ass;  /* preserve ASS markup instead of converting to ASS */
+    int video_w;  /* video width used to decide SD/HD wrapping heuristics */
+    int video_h;  /* video height used to decide SD/HD wrapping heuristics */
+} SRTParserConfig;
+
+/* Backwards-compatible variant that accepts an explicit configuration.
+ * If `cfg` is NULL, behavior matches `parse_srt()` and uses current globals.
+ */
+int parse_srt_cfg(const char *filename, SRTEntry **entries_out, FILE *qc, const SRTParserConfig *cfg);
+
+/*
  * Convert minimal HTML (<i>, <b>, <font>) into ASS overrides. Caller
  * must free the returned string. 
  * */

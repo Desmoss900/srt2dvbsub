@@ -47,6 +47,9 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "render_pool.h"
+#include "render_pango.h"
+#include "utils.h"
+#include "bench.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -170,6 +173,7 @@ typedef struct RenderJob {
     int disp_w, disp_h;
     int fontsize;
     char *fontfam;
+    char *fontstyle;
     char *fgcolor, *outlinecolor, *shadowcolor;
     int align_code;
     char *palette_mode;
@@ -245,6 +249,7 @@ static void cleanup_job_container(RenderJob *j, int free_container) {
     if (!j) return;
     if (j->markup) free(j->markup);
     if (j->fontfam) free(j->fontfam);
+    if (j->fontstyle) free(j->fontstyle);
     if (j->fgcolor) free(j->fgcolor);
     if (j->outlinecolor) free(j->outlinecolor);
     if (j->shadowcolor) free(j->shadowcolor);
@@ -304,18 +309,27 @@ static void *worker_thread(void *arg) {
         /* Perform the CPU/GPU-agostic render (Pango/Cairo path). This may be
          * moderately expensive so we do it outside the global mutex to avoid
          * blocking submission or other workers. */
+        int64_t render_start = 0;
+        if (bench.enabled)
+            render_start = bench_now();
         Bitmap bm = render_text_pango(job->markup,
                                       job->disp_w, job->disp_h,
                                       job->fontsize, job->fontfam,
+                                      job->fontstyle,
                                       job->fgcolor, job->outlinecolor, job->shadowcolor,
                                       job->align_code, job->palette_mode);
+        if (bench.enabled && render_start)
+        {
+            bench_add_render_us(bench_now() - render_start);
+            bench_inc_cues_rendered();
+        }
 
         /* Store result and notify waiters. Each job has its own mutex/cond
          * so callers waiting on a specific job don't contend on the global
          * job_mtx. */
         pthread_mutex_lock(&job->done_mtx);
-    job->result = bm;
-    atomic_store(&job->done, 1);
+        job->result = bm;
+        atomic_store(&job->done, 1);
         pthread_cond_signal(&job->done_cond);
         pthread_mutex_unlock(&job->done_mtx);
     }
@@ -430,6 +444,7 @@ void render_pool_shutdown(void) {
 Bitmap render_pool_render_sync(const char *markup,
                                 int disp_w, int disp_h,
                                 int fontsize, const char *fontfam,
+                                const char *fontstyle,
                                 const char *fgcolor, const char *outlinecolor,
                                 const char *shadowcolor, int align_code,
                                 const char *palette_mode)
@@ -438,7 +453,7 @@ Bitmap render_pool_render_sync(const char *markup,
     /* If the pool isn't active, just call the renderer synchronously to
      * keep callers working without a pool. */
     if (!atomic_load(&pool_active)) {
-        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fgcolor, outlinecolor, shadowcolor, align_code, palette_mode);
+        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, align_code, palette_mode);
     }
 
     /* Build a transient job structure which we will wait on. We don't add
@@ -450,6 +465,7 @@ Bitmap render_pool_render_sync(const char *markup,
     job->markup = strdup(markup ? markup : "");
     job->disp_w = disp_w; job->disp_h = disp_h; job->fontsize = fontsize;
     job->fontfam = fontfam ? strdup(fontfam) : NULL;
+    job->fontstyle = fontstyle ? strdup(fontstyle) : NULL;
     job->fgcolor = fgcolor ? strdup(fgcolor) : NULL;
     job->outlinecolor = outlinecolor ? strdup(outlinecolor) : NULL;
     job->shadowcolor = shadowcolor ? strdup(shadowcolor) : NULL;
@@ -457,7 +473,8 @@ Bitmap render_pool_render_sync(const char *markup,
     job->palette_mode = palette_mode ? strdup(palette_mode) : NULL;
     atomic_store(&job->done, 0);
     job->done_cond_init = 0; job->done_mtx_init = 0;
-    if (!job->markup || (fontfam && !job->fontfam) || (fgcolor && !job->fgcolor) ||
+    if (!job->markup || (fontfam && !job->fontfam) || (fontstyle && !job->fontstyle) ||
+        (fgcolor && !job->fgcolor) ||
         (outlinecolor && !job->outlinecolor) || (shadowcolor && !job->shadowcolor) ||
         (palette_mode && !job->palette_mode)) {
         cleanup_job_container(job, 1);
@@ -506,6 +523,7 @@ int render_pool_submit_async(int track_id, int cue_index,
                              const char *markup,
                              int disp_w, int disp_h,
                              int fontsize, const char *fontfam,
+                             const char *fontstyle,
                              const char *fgcolor, const char *outlinecolor,
                              const char *shadowcolor, int align_code,
                              const char *palette_mode)
@@ -519,6 +537,7 @@ int render_pool_submit_async(int track_id, int cue_index,
     job->markup = strdup(markup ? markup : "");
     job->disp_w = disp_w; job->disp_h = disp_h; job->fontsize = fontsize;
     job->fontfam = fontfam ? strdup(fontfam) : NULL;
+    job->fontstyle = fontstyle ? strdup(fontstyle) : NULL;
     job->fgcolor = fgcolor ? strdup(fgcolor) : NULL;
     job->outlinecolor = outlinecolor ? strdup(outlinecolor) : NULL;
     job->shadowcolor = shadowcolor ? strdup(shadowcolor) : NULL;
@@ -526,8 +545,8 @@ int render_pool_submit_async(int track_id, int cue_index,
     job->palette_mode = palette_mode ? strdup(palette_mode) : NULL;
     atomic_store(&job->done, 0);
     job->done_cond_init = 0; job->done_mtx_init = 0;
-    if (!job->markup || (fontfam && !job->fontfam) || (fgcolor && !job->fgcolor) ||
-        (outlinecolor && !job->outlinecolor) || (shadowcolor && !job->shadowcolor) ||
+    if (!job->markup || (fontfam && !job->fontfam) || (fontstyle && !job->fontstyle) ||
+        (fgcolor && !job->fgcolor) || (outlinecolor && !job->outlinecolor) || (shadowcolor && !job->shadowcolor) ||
         (palette_mode && !job->palette_mode)) {
         cleanup_job_container(job, 1);
         return -1;

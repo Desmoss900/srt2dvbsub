@@ -56,6 +56,10 @@
 #include <errno.h>
 #include <string.h>
 
+/* Provide a short module name used by LOG() in debug.h */
+#define DEBUG_MODULE "debug_png"
+#include "debug.h"
+
 /*
  * save_bitmap_png
  * ----------------
@@ -93,7 +97,15 @@ void save_bitmap_png(const Bitmap *bm, const char *filename) {
      * Cairo to write the surface to a PNG file.
      */
     cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bm->w, bm->h);
+    if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        if (surface) cairo_surface_destroy(surface);
+        return; /* debug helper: bail quietly on surface creation failure */
+    }
     unsigned char *data = cairo_image_surface_get_data(surface);
+    if (!data) {
+        cairo_surface_destroy(surface);
+        return;
+    }
     int stride = cairo_image_surface_get_stride(surface);
 
     /*
@@ -164,29 +176,29 @@ void save_bitmap_png(const Bitmap *bm, const char *filename) {
      */
     char fullpath[PATH_MAX];
     if (getcwd(fullpath, sizeof(fullpath)) != NULL) {
-        size_t need = strlen(fullpath) + 1 + strlen(filename) + 1;
-        char *expected_alloc = malloc(need);
-        if (expected_alloc) {
-            snprintf(expected_alloc, need, "%s/%s", fullpath, filename);
-            if (status == CAIRO_STATUS_SUCCESS) {
-                fprintf(stderr, "Wrote debug PNG: %s (expected %s)\n", filename, expected_alloc);
+            size_t need = strlen(fullpath) + 1 + strlen(filename) + 1;
+            char *expected_alloc = malloc(need);
+            if (expected_alloc) {
+                snprintf(expected_alloc, need, "%s/%s", fullpath, filename);
+                if (status == CAIRO_STATUS_SUCCESS) {
+                    LOG(1, "Wrote debug PNG: %s (expected %s)\n", filename, expected_alloc);
+                } else {
+                    const char *s = cairo_status_to_string(status);
+                    LOG(1, "Failed to write PNG %s: %s (expected %s)\n", filename, s, expected_alloc);
+                }
+                free(expected_alloc);
             } else {
-                const char *s = cairo_status_to_string(status);
-                fprintf(stderr, "Failed to write PNG %s: %s (expected %s)\n", filename, s, expected_alloc);
-            }
-            free(expected_alloc);
-        } else {
-            /* If allocation fails, still print a minimal status string. */
-            if (status == CAIRO_STATUS_SUCCESS)
-                fprintf(stderr, "Wrote debug PNG: %s\n", filename);
-            else
-                fprintf(stderr, "Failed to write PNG %s: %s\n", filename, cairo_status_to_string(status));
+                /* If allocation fails, still print a minimal status string. */
+                if (status == CAIRO_STATUS_SUCCESS)
+                    LOG(1, "Wrote debug PNG: %s\n", filename);
+                else
+                    LOG(1, "Failed to write PNG %s: %s\n", filename, cairo_status_to_string(status));
         }
     } else {
         /* getcwd failed — print the basic status message */
         if (status == CAIRO_STATUS_SUCCESS)
-            fprintf(stderr, "Wrote debug PNG: %s\n", filename);
+            LOG(1, "Wrote debug PNG: %s\n", filename);
         else
-            fprintf(stderr, "Failed to write PNG %s: %s\n", filename, cairo_status_to_string(status));
+            LOG(1, "Failed to write PNG %s: %s\n", filename, cairo_status_to_string(status));
     }
 }

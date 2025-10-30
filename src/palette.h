@@ -61,6 +61,12 @@
  * modes require at least 16 entries; callers should allocate sufficient
  * space for the intended mode.
  *
+ * Palette contract (important): index 0 is reserved for transparency.
+ * The implementation of `init_palette()` guarantees that `pal[0]` will
+ * have an alpha value of 0 (fully transparent, e.g. 0x00RRGGBB). Callers
+ * should rely on this convention when treating index 0 as transparent
+ * when composing or encoding DVB bitmaps.
+ *
  * Example:
  * @code
  *   uint32_t pal[16];
@@ -81,6 +87,12 @@
  * Notes:
  *  - This function does not return an error code. Callers must allocate
  *    sufficient storage for the expected palette size.
+ *
+ * Contract:
+ *  - `pal` must be writable and have space for at least 16 entries for
+ *    common DVB palettes. `init_palette()` will set `pal[0]` to a fully
+ *    transparent ARGB entry (alpha == 0) so callers may treat index 0
+ *    as transparent without additional checks.
  */
 void init_palette(uint32_t *pal, const char *mode);
 

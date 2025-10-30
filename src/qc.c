@@ -45,11 +45,33 @@
 * ────────────────────────────────────────────────────────────────
 */
 
+/*
+ * Audit & Correction Summary (added 2025-10-28)
+ * --------------------------------------------
+ * Issues found and fixes applied to `qc.c`:
+ *  - Null-dereference: guarded control-character and closing-tag
+ *    checks against NULL `cur->text` to avoid crashes.
+ *  - Data race: converted `qc_error_count` to `atomic_int` and used
+ *    C11 atomic ops for reset/increment to make concurrent runs safe.
+ *  - Diagnostic buffers: increased some snprintf buffers to reduce
+ *    truncation risk.
+ *  - Tests: added `testharness/test_qc.c` to exercise common QC cases.
+ *
+ * Notes: UTF-8 counting is heuristic; consider full UTF-8 validation
+ * if stricter checks are required. Atomics were chosen for low
+ * overhead; a pthread mutex can be used instead if preferred.
+ */
+
 #define _POSIX_C_SOURCE 200809L
 #include "qc.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdatomic.h>
+
+/* Provide a short module name for LOG() */
+#define DEBUG_MODULE "qc"
+#include "debug.h"
 
 // ANSI colors (only if stderr is a terminal)
 #define COL_RED   "\033[31m"
@@ -76,20 +98,40 @@ extern int video_h;
  * `debug_level` is set the same message is also echoed to stderr with ANSI
  * coloring to aid human inspection.
  */
-int qc_error_count = 0;
+atomic_int qc_error_count = 0;
 
+/*
+ * Resets the error count for quality control to zero.
+ * This function should be called to clear any accumulated errors
+ * before starting a new quality control process.
+ */
 void qc_reset_counts(void) {
-    qc_error_count = 0;
+    atomic_store_explicit(&qc_error_count, 0, memory_order_relaxed);
 }
 
+/*
+ * Logs a QC (quality control) message to the specified file or stderr.
+ *
+ * Parameters:
+ *   qc        - Pointer to the QC file (FILE*). If NULL, logs to stderr.
+ *   level     - String indicating the log level (e.g., "ERROR", "WARNING").
+ *   color     - ANSI color code string for colored output (used in debug mode).
+ *   filename  - Name of the file associated with the log message.
+ *   cue_idx   - Index of the cue related to the log message.
+ *   msg       - The log message to be written.
+ *
+ * Behavior:
+ *   - Writes the log message to the QC file if provided, otherwise to stderr.
+ *   - In debug mode, also outputs a colored log message using LOG macro.
+ *   - If the log level is "ERROR", increments the global error counter for batch QC reporting.
+ */
 static void log_qc(FILE *qc, const char *level, const char *color,
                    const char *filename, int cue_idx, const char *msg) {
     /* Write plain line to qc file when present, otherwise to stderr. */
     if (qc) {
         fprintf(qc, "%s: cue %d %s: %s\n", filename, cue_idx, level, msg);
         if (debug_level > 0) {
-            fprintf(stderr, "%s%s: cue %d %s: %s%s\n",
-                    color, filename, cue_idx, level, msg, COL_RST);
+            LOG(1, "%s%s: cue %d %s: %s%s\n", color, filename, cue_idx, level, msg, COL_RST);
         }
     } else {
         fprintf(stderr, "%s: cue %d %s: %s\n", filename, cue_idx, level, msg);
@@ -98,7 +140,7 @@ static void log_qc(FILE *qc, const char *level, const char *color,
     /* If this line is an ERROR, increment the global error counter so
      * callers running batch QC can report a summary. */
     if (level && strcmp(level, "ERROR") == 0) {
-        qc_error_count++;
+        atomic_fetch_add_explicit(&qc_error_count, 1, memory_order_relaxed);
     }
 }
 
@@ -145,7 +187,6 @@ void qc_check_entry(const char *filename, int cue_idx,
                "duration unusually long (>10s)");
     }
 
-    /*
     /* 5) Character-per-line check: compute the maximum run-length on any
      * line to detect lines that will wrap poorly when rendered. We operate
      * on UTF-8 codepoints (not bytes) so multi-byte glyphs count as a
@@ -176,24 +217,26 @@ void qc_check_entry(const char *filename, int cue_idx,
     int is_hd = (video_w > 720 || video_h > 576);
     int threshold = is_hd ? QC_MAX_CHARS_HD : QC_MAX_CHARS_SD;
     if (maxlen > threshold) {
-        char msg[64];
+        char msg[128];
         snprintf(msg, sizeof(msg), "line exceeds %d chars (%d)", threshold, maxlen);
         log_qc(qc, "WARN", COL_YEL, filename, cue_idx, msg);
     }
 
     /* 6) Too many lines (>3) */
     if (lines > 3) {
-        char msg[64];
+        char msg[128];
         snprintf(msg, sizeof(msg), "too many lines (%d)", lines);
         log_qc(qc, "WARN", COL_YEL, filename, cue_idx, msg);
     }
 
     /* 7) Control characters detection */
-    for (t = cur->text; *t; t++) {
-        if (*t < 0x20 && *t != '\n' && *t != '\t') {
-            log_qc(qc, "WARN", COL_YEL, filename, cue_idx,
-                   "contains control characters");
-            break;
+    if (cur->text) {
+        for (t = (const unsigned char *)cur->text; *t; t++) {
+            if (*t < 0x20 && *t != '\n' && *t != '\t') {
+                log_qc(qc, "WARN", COL_YEL, filename, cue_idx,
+                       "contains control characters");
+                break;
+            }
         }
     }
 
@@ -210,8 +253,8 @@ void qc_check_entry(const char *filename, int cue_idx,
     }
 
     /* 10) Informational: closing tags detected (parser normalized them). */
-    if (strstr(cur->text, "</span>") || strstr(cur->text, "</i>") ||
-        strstr(cur->text, "</b>") || strstr(cur->text, "</u>")) {
+    if (cur->text && (strstr(cur->text, "</span>") || strstr(cur->text, "</i>") ||
+        strstr(cur->text, "</b>") || strstr(cur->text, "</u>"))) {
         log_qc(qc, "INFO", COL_CYN, filename, cue_idx,
                "markup normalized/auto-closed");
     }

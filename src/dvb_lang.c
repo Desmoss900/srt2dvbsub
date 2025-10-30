@@ -45,89 +45,88 @@
 * ────────────────────────────────────────────────────────────────
 */
 
-#ifndef SRT2DVB_RUNTIME_OPTS_H
-#define SRT2DVB_RUNTIME_OPTS_H
+#include "dvb_lang.h"
 
-/**
- * @file runtime_opts.h
- * @brief Global runtime-configurable options used by the application.
- *
- * These globals are populated (with defaults) in `runtime_opts.c` and may be
- * overridden by command-line parsing in `main.c`. They are intentionally
- * simple globals to keep option access convenient across the codebase.
- *
- * Thread-safety: the variables are read-mostly after initialization. Any
- * runtime mutation must be synchronized by the caller.
- */
+/* Immutable DVB language lookup table (definition). */
+const struct dvb_lang_entry dvb_langs[] = {
+    {"eng", "English", "English"},
+    {"deu", "German", "Deutsch"},
+    {"fra", "French", "Français"},
+    {"spa", "Spanish", "Español"},
+    {"ita", "Italian", "Italiano"},
+    {"por", "Portuguese", "Português"},
+    {"rus", "Russian", "Русский"},
+    {"jpn", "Japanese", "日本語"},
+    {"zho", "Chinese", "中文"},
+    {"kor", "Korean", "한국어"},
+    {"nld", "Dutch", "Nederlands"},
+    {"swe", "Swedish", "Svenska"},
+    {"dan", "Danish", "Dansk"},
+    {"nor", "Norwegian", "Norsk"},
+    {"fin", "Finnish", "Suomi"},
+    {"pol", "Polish", "Polski"},
+    {"ces", "Czech", "Čeština"},
+    {"slk", "Slovak", "Slovenčina"},
+    {"slv", "Slovenian", "Slovenščina"},
+    {"hrv", "Croatian", "Hrvatski"},
+    {"ron", "Romanian", "Română"},
+    {"bul", "Bulgarian", "Български"},
+    {"ukr", "Ukrainian", "Українська"},
+    {"bel", "Belarusian", "Беларуская"},
+    {"est", "Estonian", "Eesti"},
+    {"lav", "Latvian", "Latviešu"},
+    {"lit", "Lithuanian", "Lietuvių"},
+    {"hun", "Hungarian", "Magyar"},
+    {"heb", "Hebrew", "עברית"},
+    {"ara", "Arabic", "العربية"},
+    {"tur", "Turkish", "Türkçe"},
+    {"ell", "Greek", "Ελληνικά"},
+    {"cat", "Catalan", "Català"},
+    {"gle", "Irish", "Gaeilge"},
+    {"eus", "Basque", "Euskara"},
+    {"glg", "Galician", "Galego"},
+    {"srp", "Serbian", "Српски"},
+    {"mkd", "Macedonian", "Македонски"},
+    {"alb", "Albanian", "Shqip"},
+    {"hin", "Hindi", "हिन्दी"},
+    {"tam", "Tamil", "தமிழ்"},
+    {"tel", "Telugu", "తెలుగు"},
+    {"pan", "Punjabi", "ਪੰਜਾਬੀ"},
+    {"urd", "Urdu", "اردو"},
+    {"vie", "Vietnamese", "Tiếng Việt"},
+    {"tha", "Thai", "ไทย"},
+    {"ind", "Indonesian", "Bahasa Indonesia"},
+    {"msa", "Malay", "Bahasa Melayu"},
+    {"sin", "Sinhala", "සිංහල"},
+    {"khm", "Khmer", "ភាសាខ្មែរ"},
+    {"lao", "Lao", "ລາວ"},
+    {"mon", "Mongolian", "Монгол"},
+    {"fas", "Persian", "فارسی"},
+    {NULL, NULL, NULL}
+};
 
-/**
- * @brief Number of encoder threads to be used.
- *
- * This external variable specifies how many threads should be allocated
- * for encoding operations. It can be set to optimize performance based
- * on available hardware resources.
- */
- extern int enc_threads;
+int is_valid_dvb_lang(const char *code)
+{
+    if (!code)
+        return 0;
 
-/**
- * @brief Number of threads used for rendering operations.
- *
- * This external integer variable specifies how many threads
- * are allocated for rendering tasks. It can be set to optimize
- * performance based on available system resources.
- */
-extern int render_threads;
+    size_t len = strlen(code);
+    if (len != 3)
+        return 0;
 
-/**
- * @brief Overrides the default SSAA (Super-Sampling Anti-Aliasing) setting.
- *
- * This external integer variable can be used to force a specific SSAA configuration
- * at runtime, bypassing the default or configured value.
- *
- * @note The exact effect depends on how this variable is used in the implementation.
- */
-extern int ssaa_override;
+    char low[4];
+    for (int i = 0; i < 3; i++)
+    {
+        if (!isalpha((unsigned char)code[i]))
+            return 0;
+        low[i] = tolower((unsigned char)code[i]);
+    }
+    low[3] = '\0';
 
-/**
- * @brief Global flag to disable the unsharp filter.
- *
- * When set to a non-zero value, the unsharp filter will be disabled in the runtime.
- * This variable is typically set via command-line options or configuration files.
- */
-extern int no_unsharp;
-
-/**
- * @brief Global variable to control the level of debug output.
- *
- * The value of debug_level determines the verbosity of debug messages
- * throughout the application. Higher values enable more detailed logging.
- */
-extern int debug_level;
-
-/**
- * Indicates whether ASS (Advanced SubStation Alpha) subtitle support is enabled.
- * 
- * When set to a non-zero value, the application will use ASS subtitles.
- * When set to zero, ASS subtitles are disabled.
- */
-extern int use_ass;
-
-/**
- * @brief External variable representing the width of the video.
- *
- * This variable is declared as an external integer and is expected to be
- * defined elsewhere in the program. It typically holds the width (in pixels)
- * of the video being processed or displayed.
- */
-extern int video_w;
-
-/**
- * @brief Height of the video frame in pixels.
- *
- * This external integer variable specifies the vertical resolution (height)
- * of the video frame. It is typically set during runtime configuration and
- * used throughout the application wherever video frame dimensions are required.
- */
-extern int video_h;
-
-#endif /* SRT2DVB_RUNTIME_OPTS_H */
+    for (const struct dvb_lang_entry *p = dvb_langs; p->code; ++p)
+    {
+        if (strcmp(low, p->code) == 0)
+            return 1;
+    }
+    return 0;
+}

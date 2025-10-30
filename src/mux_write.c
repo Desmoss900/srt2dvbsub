@@ -45,89 +45,40 @@
 * ────────────────────────────────────────────────────────────────
 */
 
-#ifndef SRT2DVB_RUNTIME_OPTS_H
-#define SRT2DVB_RUNTIME_OPTS_H
+/* Thread-safe wrapper implementation for av_interleaved_write_frame. */
+#define _POSIX_C_SOURCE 200809L
+#include "mux_write.h"
+#include <pthread.h>
+#include <libavformat/avformat.h>
 
-/**
- * @file runtime_opts.h
- * @brief Global runtime-configurable options used by the application.
+#ifndef ENABLE_THREAD_SAFE_MUX
+#define ENABLE_THREAD_SAFE_MUX 1
+#endif
+
+#if ENABLE_THREAD_SAFE_MUX
+static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+/*
+ * Writes an AVPacket to the given AVFormatContext in a thread-safe manner.
+ * This function locks a mutex before calling av_interleaved_write_frame to ensure
+ * that only one thread can write to the context at a time, preventing race conditions.
  *
- * These globals are populated (with defaults) in `runtime_opts.c` and may be
- * overridden by command-line parsing in `main.c`. They are intentionally
- * simple globals to keep option access convenient across the codebase.
+ * Parameters:
+ *   s   - Pointer to the AVFormatContext where the packet will be written.
+ *   pkt - Pointer to the AVPacket to be written.
  *
- * Thread-safety: the variables are read-mostly after initialization. Any
- * runtime mutation must be synchronized by the caller.
+ * Returns:
+ *   The return value from av_interleaved_write_frame, indicating success or failure.
  */
-
-/**
- * @brief Number of encoder threads to be used.
- *
- * This external variable specifies how many threads should be allocated
- * for encoding operations. It can be set to optimize performance based
- * on available hardware resources.
- */
- extern int enc_threads;
-
-/**
- * @brief Number of threads used for rendering operations.
- *
- * This external integer variable specifies how many threads
- * are allocated for rendering tasks. It can be set to optimize
- * performance based on available system resources.
- */
-extern int render_threads;
-
-/**
- * @brief Overrides the default SSAA (Super-Sampling Anti-Aliasing) setting.
- *
- * This external integer variable can be used to force a specific SSAA configuration
- * at runtime, bypassing the default or configured value.
- *
- * @note The exact effect depends on how this variable is used in the implementation.
- */
-extern int ssaa_override;
-
-/**
- * @brief Global flag to disable the unsharp filter.
- *
- * When set to a non-zero value, the unsharp filter will be disabled in the runtime.
- * This variable is typically set via command-line options or configuration files.
- */
-extern int no_unsharp;
-
-/**
- * @brief Global variable to control the level of debug output.
- *
- * The value of debug_level determines the verbosity of debug messages
- * throughout the application. Higher values enable more detailed logging.
- */
-extern int debug_level;
-
-/**
- * Indicates whether ASS (Advanced SubStation Alpha) subtitle support is enabled.
- * 
- * When set to a non-zero value, the application will use ASS subtitles.
- * When set to zero, ASS subtitles are disabled.
- */
-extern int use_ass;
-
-/**
- * @brief External variable representing the width of the video.
- *
- * This variable is declared as an external integer and is expected to be
- * defined elsewhere in the program. It typically holds the width (in pixels)
- * of the video being processed or displayed.
- */
-extern int video_w;
-
-/**
- * @brief Height of the video frame in pixels.
- *
- * This external integer variable specifies the vertical resolution (height)
- * of the video frame. It is typically set during runtime configuration and
- * used throughout the application wherever video frame dimensions are required.
- */
-extern int video_h;
-
-#endif /* SRT2DVB_RUNTIME_OPTS_H */
+int safe_av_interleaved_write_frame(AVFormatContext *s, AVPacket *pkt) {
+    int ret;
+#if ENABLE_THREAD_SAFE_MUX
+    pthread_mutex_lock(&write_mutex);
+#endif
+    ret = av_interleaved_write_frame(s, pkt);
+#if ENABLE_THREAD_SAFE_MUX
+    pthread_mutex_unlock(&write_mutex);
+#endif
+    return ret;
+}

@@ -91,6 +91,17 @@ typedef struct SubTrack {
     int hi;                 /**< High-priority flag (internal use) */
     int64_t last_pts;       /**< Last emitted PTS for this track (for monotonicity) */
     int effective_delay_ms; /**< Per-track delay applied to cue timing in ms */
+    /* Per-track temporary buffer reused when encoding subtitles. This
+     * avoids repeated av_malloc/av_free churn for every encoded cue.
+     * Allocated lazily by encode_and_write_subtitle and intentionally
+     * retained for the process lifetime. */
+    uint8_t *enc_tmpbuf;
+    /* Size of the allocated enc_tmpbuf in bytes (0 when not allocated). */
+    size_t enc_tmpbuf_size;
+    /* Count of consecutive times the encoder filled the buffer completely.
+     * When this exceeds a small threshold we will increase the buffer size
+     * automatically to reduce truncation. */
+    int enc_tmpbuf_full_count;
 } SubTrack;
 
 #endif 

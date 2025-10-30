@@ -171,6 +171,19 @@ void render_ass_set_style(ASS_Track *track,
                           const char *font, int size,
                           const char *fg, const char *outline, const char *shadow);
 
+
+/**
+ * @brief Converts a hexadecimal color string to ASS (Advanced SubStation Alpha) color format.
+ *
+ * This function takes a color specified as a hexadecimal string (e.g., "#RRGGBB" or "RRGGBB")
+ * and converts it to the ASS color format, storing the result in the provided output buffer.
+ *
+ * @param hex      The input hexadecimal color string.
+ * @param out      The output buffer to store the ASS color string.
+ * @param outsz    The size of the output buffer.
+ */
+void render_ass_hex_to_ass_color(const char *hex, char *out, size_t outsz);
+
 /**
  * Print a human-readable dump of styles in a track to stderr.
  *
@@ -183,5 +196,32 @@ void render_ass_debug_styles(ASS_Track *track);
 void render_ass_free_track(ASS_Track *track);
 void render_ass_free_renderer(ASS_Renderer *renderer);
 void render_ass_free_lib(ASS_Library *lib);
+
+/*
+ * Thread-safety helpers
+ * ---------------------
+ * libass' objects (ASS_Renderer, ASS_Track) are not guaranteed to be
+ * safe for concurrent access from multiple threads when the same object
+ * is shared. Preferred patterns are:
+ *  - Create one ASS_Renderer per thread and avoid sharing it, or
+ *  - Serialize access to shared renderer/track objects using a mutex.
+ *
+ * The following coarse-grained lock/unlock helpers provide a simple
+ * serialization primitive callers may use when they cannot avoid sharing
+ * libass objects. They implement a global mutex and are intentionally
+ * lightweight. For higher concurrency, callers should implement a
+ * per-renderer locking scheme or use one renderer per thread.
+ */
+void render_ass_lock(void);
+void render_ass_unlock(void);
+
+/* Validate an ASS image tile's basic fields. Returns 1 if the tile appears
+ * sane for rasterization (bitmap non-NULL, stride >= width, reasonable
+ * size), or 0 if the tile should be skipped.
+ *
+ * This helper is public to allow unit testing without requiring a full
+ * libass ASS_Image allocation in the test harness.
+ */
+int render_ass_validate_image_tile(int w, int h, int stride, const void *bitmap);
 
 #endif

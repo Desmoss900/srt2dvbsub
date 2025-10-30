@@ -151,11 +151,12 @@ void render_pool_shutdown(void);
  * @return Bitmap (may be empty with w==0 on failure).
  */
 Bitmap render_pool_render_sync(const char *markup,
-                                int disp_w, int disp_h,
-                                int fontsize, const char *fontfam,
-                                const char *fgcolor, const char *outlinecolor,
-                                const char *shadowcolor, int align_code,
-                                const char *palette_mode);
+                               int disp_w, int disp_h,
+                               int fontsize, const char *fontfam,
+                               const char *fontstyle,
+                               const char *fgcolor, const char *outlinecolor,
+                               const char *shadowcolor, int align_code,
+                               const char *palette_mode);
 
 /*
  * Submit an asynchronous render job keyed by (track_id, cue_index).
@@ -163,9 +164,10 @@ Bitmap render_pool_render_sync(const char *markup,
  * -1 if the pool is not running or on allocation failure.
  */
 int render_pool_submit_async(int track_id, int cue_index,
-                             const char *markup, int disp_w, int disp_h, int fontsize,
-                             const char *fontfam, const char *fgcolor, const char *outlinecolor,
-                             const char *shadowcolor, int align_code, const char *palette_mode);
+                            const char *markup, int disp_w, int disp_h, int fontsize,
+                            const char *fontfam, const char *fontstyle,
+                            const char *fgcolor, const char *outlinecolor,
+                            const char *shadowcolor, int align_code, const char *palette_mode);
 
 /*
  * Try to retrieve a completed job for the given (track_id, cue_index).
