@@ -126,6 +126,7 @@ void print_help(void)
     printf("      --fgcolor #RRGGBB       Text color (in quotes i.e. \"#00ff00)\"\n");
     printf("      --outlinecolor #RRGGBB  Outline color (in quotes i.e. \"#808080\")\n");
     printf("      --shadowcolor #AARRGGBB Shadow color (alpha optional...in quotes i.e. \"#00808080\")\n");
+    printf("      --bg-color #RRGGBB      Background color (in quotes i.e. \"#000000\")\n");
     printf("      --ssaa N                Force supersample factor (1..24) (default 4)\n");        
     printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
     printf("      --enc-threads N         Encoder thread count (0=auto)\n");

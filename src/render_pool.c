@@ -174,7 +174,7 @@ typedef struct RenderJob {
     int fontsize;
     char *fontfam;
     char *fontstyle;
-    char *fgcolor, *outlinecolor, *shadowcolor;
+    char *fgcolor, *outlinecolor, *shadowcolor, *bgcolor;
     int align_code;
     char *palette_mode;
     Bitmap result;
@@ -253,6 +253,7 @@ static void cleanup_job_container(RenderJob *j, int free_container) {
     if (j->fgcolor) free(j->fgcolor);
     if (j->outlinecolor) free(j->outlinecolor);
     if (j->shadowcolor) free(j->shadowcolor);
+    if (j->bgcolor) free(j->bgcolor);
     if (j->palette_mode) free(j->palette_mode);
     if (j->result.idxbuf) av_free(j->result.idxbuf);
     if (j->result.palette) av_free(j->result.palette);
@@ -281,6 +282,7 @@ static int init_job_strings(RenderJob *job,
                            const char *fgcolor,
                            const char *outlinecolor,
                            const char *shadowcolor,
+                           const char *bgcolor,
                            const char *palette_mode)
 {
     if (!job) return -1;
@@ -292,12 +294,13 @@ static int init_job_strings(RenderJob *job,
     job->fgcolor = fgcolor ? strdup(fgcolor) : NULL;
     job->outlinecolor = outlinecolor ? strdup(outlinecolor) : NULL;
     job->shadowcolor = shadowcolor ? strdup(shadowcolor) : NULL;
+    job->bgcolor = bgcolor ? strdup(bgcolor) : NULL;
     job->palette_mode = palette_mode ? strdup(palette_mode) : NULL;
     
     /* Validate allocations: markup is always required, others conditional */
     if (!job->markup || (fontfam && !job->fontfam) || (fontstyle && !job->fontstyle) ||
         (fgcolor && !job->fgcolor) || (outlinecolor && !job->outlinecolor) || 
-        (shadowcolor && !job->shadowcolor) || (palette_mode && !job->palette_mode)) {
+        (shadowcolor && !job->shadowcolor) || (bgcolor && !job->bgcolor) || (palette_mode && !job->palette_mode)) {
         return -1;
     }
     
@@ -351,6 +354,7 @@ static void *worker_thread(void *arg) {
                                       job->fontsize, job->fontfam,
                                       job->fontstyle,
                                       job->fgcolor, job->outlinecolor, job->shadowcolor,
+                                      job->bgcolor,
                                       job->align_code, job->palette_mode);
         if (bench.enabled && render_start)
         {
@@ -490,14 +494,14 @@ Bitmap render_pool_render_sync(const char *markup,
                                 int fontsize, const char *fontfam,
                                 const char *fontstyle,
                                 const char *fgcolor, const char *outlinecolor,
-                                const char *shadowcolor, int align_code,
+                                const char *shadowcolor, const char *bgcolor, int align_code,
                                 const char *palette_mode)
 {
     Bitmap empty = {0};
     /* If the pool isn't active, just call the renderer synchronously to
      * keep callers working without a pool. */
     if (!atomic_load(&pool_active)) {
-        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, align_code, palette_mode);
+        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, bgcolor, align_code, palette_mode);
     }
 
     /* Build a transient job structure which we will wait on. We don't add
@@ -508,7 +512,7 @@ Bitmap render_pool_render_sync(const char *markup,
     
     /* Initialize string fields; on failure clean up and return */
     if (init_job_strings(job, markup, fontfam, fontstyle, fgcolor, 
-                        outlinecolor, shadowcolor, palette_mode) != 0) {
+                        outlinecolor, shadowcolor, bgcolor, palette_mode) != 0) {
         cleanup_job_container(job, 1);
         return empty;
     }
@@ -570,7 +574,7 @@ int render_pool_submit_async(int track_id, int cue_index,
                              int fontsize, const char *fontfam,
                              const char *fontstyle,
                              const char *fgcolor, const char *outlinecolor,
-                             const char *shadowcolor, int align_code,
+                             const char *shadowcolor, const char *bgcolor, int align_code,
                              const char *palette_mode)
 {
     /* If no pool exists, fail fast to let callers fall back if desired. */
@@ -594,7 +598,7 @@ int render_pool_submit_async(int track_id, int cue_index,
     
     /* Initialize string fields; on failure clean up and return */
     if (init_job_strings(job, markup, fontfam, fontstyle, fgcolor,
-                        outlinecolor, shadowcolor, palette_mode) != 0) {
+                        outlinecolor, shadowcolor, bgcolor, palette_mode) != 0) {
         cleanup_job_container(job, 1);
         return -1;
     }

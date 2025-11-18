@@ -107,6 +107,7 @@ Bitmap render_text_pango(const char *markup,
                          const char *fgcolor,
                          const char *outlinecolor,
                          const char *shadowcolor,
+                         const char *bgcolor,
                          int align_code,
                          const char *palette_mode);
 
@@ -134,6 +135,17 @@ char* srt_to_pango_markup(const char *srt_text);
 void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a);
 
 /**
+ * Parse background color in #RRGGBB format (RGB only, always opaque).
+ *
+ * Accepts only 6-digit hex colors (#RRGGBB). Background colors are always
+ * fully opaque (alpha=1.0). Malformed input defaults to opaque white.
+ *
+ * @param hex  Color string to parse in #RRGGBB format (may be NULL).
+ * @param r,g,b,a  Output pointers (a will always be 1.0).
+ */
+void parse_bgcolor(const char *hex, double *r, double *g, double *b, double *a);
+
+/**
  * Cleanup per-thread resources allocated by the Pango renderer.
  *
  * Call this from the main thread (or the thread that owns fontconfig
@@ -153,5 +165,42 @@ void render_pango_set_ssaa_override(int ssaa);
  * or to avoid potential artifacts on some content.
  */
 void render_pango_set_no_unsharp(int no_unsharp);
+
+/**
+ * Validate and resolve font family and style.
+ *
+ * Attempts to use the specified font. If it doesn't exist:
+ *   1. If user specified a font (user_font != NULL), try preferred defaults
+ *   2. If no user font specified, check preferred defaults
+ *   3. If preferred fonts fail, error out
+ *
+ * For style validation, attempts to use specified style. If it doesn't exist,
+ * falls back to "Thin", "Light", "Regular", or "Medium" in that order.
+ *
+ * @param user_font     User-specified font (NULL if using defaults)
+ * @param user_style    User-specified style (NULL if using defaults)
+ * @param out_font      Output: pointer to resolved font name (caller must free)
+ * @param out_style     Output: pointer to resolved style (caller must free), may be NULL
+ * @return              0 on success, -1 on error (fonts not available)
+ */
+int validate_and_resolve_font(const char *user_font, const char *user_style,
+                               char **out_font, char **out_style);
+
+/**
+ * Check if a specific font family exists on the system.
+ *
+ * @param font_name     Font family name to check
+ * @return              1 if font exists, 0 if not
+ */
+int font_exists(const char *font_name);
+
+/**
+ * Check if a specific font style exists for a font family.
+ *
+ * @param font_name     Font family name
+ * @param style_name    Style name to check (e.g., "Bold", "Italic", "Light")
+ * @return              1 if style exists, 0 if not
+ */
+int font_style_exists(const char *font_name, const char *style_name);
 
 #endif

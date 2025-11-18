@@ -1,0 +1,860 @@
+================================================================================
+                            SRT2DVBSUB
+         Convert SRT Subtitles to DVB Subtitles in MPEG-TS
+================================================================================
+
+1. OVERVIEW
+================================================================================
+
+srt2dvbsub is a sophisticated command-line tool that converts SRT (SubRip) 
+subtitle files into DVB (Digital Video Broadcasting) subtitle tracks and 
+multiplexes them directly into MPEG-TS (Transport Stream) files.
+
+This tool is essential for broadcasters, IPTV providers, and content
+distribution networks that need to deliver compliant DVB subtitles embedded in
+transport streams for television distribution or digital distribution platforms.
+
+Key capabilities:
+  • Convert SRT subtitle text to DVB bitmap subtitles
+  • Support for ASS/SSA format with advanced rendering options
+  • Multi-track subtitle support (up to 255 simultaneous tracks)
+  • Professional quality text-to-bitmap rendering using Pango/Cairo
+  • Direct MPEG-TS multiplexing without separate remuxing step
+  • Multi-threaded rendering for high performance
+  • Quality control (QC) verification of subtitle files
+  • Comprehensive language code support (DVB 3-letter codes)
+  • Full control over subtitle appearance (fonts, colors, sizing)
+
+
+2. MOTIVATION & USE CASES
+================================================================================
+
+Traditional workflow limitations:
+  • Most open source video editing tools cannot directly output DVB subtitles
+  • Subtitles from SRT files must be manually converted to bitmap format
+  • DVB subtitles are binary and cannot be edited in text editors
+  • Post-production subtitle generation is labor-intensive
+
+srt2dvbsub solves these problems by:
+  • Automating SRT-to-DVB conversion in a single command
+  • Supporting professional text rendering with full font control
+  • Enabling batch processing for content archives
+  • Integrating into automated encoding pipelines
+  • Eliminating need for proprietary DVB authoring tools
+  • Providing QC checks for subtitle file validity before encoding
+
+Primary use cases:
+  1. IPTV/OTT platforms: Delivering broadcast-compliant subtitles
+  2. Archive digitization: Converting legacy subtitle formats
+  3. Broadcast mastering: Multi-language subtitle preparation
+  4. Content distribution: Quality-controlled subtitle delivery
+  5. Automated encoding: Pipeline integration for batch processing
+
+
+3. FEATURES
+================================================================================
+
+3.1 Subtitle Conversion
+  ✓ SRT (SubRip) format parsing and conversion - ONLY format accepted
+  ✓ ASS/SSA tag support within SRT files (evaluated only with --ass flag)
+  ✓ Multi-track subtitle processing
+  ✓ Per-track language code assignment (DVB 3-letter ISO codes)
+  ✓ Forced subtitle flag per track
+  ✓ Hearing-impaired subtitle flag per track
+
+3.2 Text Rendering
+  ✓ Professional text rendering via Pango/Cairo
+  ✓ Optional libass rendering for advanced ASS formatting
+  ✓ Configurable font families and styles
+  ✓ Dynamic font size calculation based on video resolution
+  ✓ Manual font size override support
+  ✓ Custom foreground, outline, and shadow colors
+  ✓ Color validation and format conversion
+
+3.3 DVB Subtitle Generation
+  ✓ MPEG-TS multiplexing with subtitle tracks
+  ✓ DVB Page Composition Segment (PCS) generation
+  ✓ Palette mode selection (EBU broadcast, broadcast, web, legacy)
+  ✓ Automatic dithering for color reduction
+  ✓ Unsharp mask filter for text clarity (optional)
+  ✓ Supersample anti-aliasing (SSAA) with configurable factors
+
+3.4 Performance & Quality
+  ✓ Multi-threaded rendering (configurable thread count)
+  ✓ Per-track subtitle delay adjustment
+  ✓ Global delay offset support
+  ✓ Benchmark mode for performance analysis
+  ✓ Quality control (QC) mode for subtitle validation
+  ✓ Debug PNG output for visual inspection
+  ✓ Comprehensive debug logging
+
+3.5 Compatibility
+  ✓ FFmpeg 58.0+ integration
+  ✓ Pango 1.52.1+ text rendering
+  ✓ Cairo 1.18.0+ graphics
+  ✓ Fontconfig 2.15.0+ font discovery
+  ✓ libass 0.17.1+ (optional)
+  ✓ POSIX-compliant systems (Linux, macOS, BSD)
+
+
+4. INSTALLATION
+================================================================================
+
+4.1 Build Requirements
+  • C11 compiler (GCC, Clang)
+  • FFmpeg development libraries (libavformat, libavcodec, libavutil, libswscale)
+  • Pango 1.52.1 or later
+  • Cairo 1.18.0 or later
+  • Fontconfig 2.15.0 or later
+  • pkg-config
+  • Autotools (autoconf, automake)
+  • libass 0.17.1+ (optional, for ASS support)
+
+4.2 Building from Source
+  # Generate build files from templates
+  autoreconf -fi
+
+  # Create build directory (in-tree builds not supported)
+  mkdir build && cd build
+  
+  # Configure (basic build)
+  ../configure
+  
+  # Configure with libass support
+  ../configure --enable-ass
+  
+  # Configure with thread-safe mux disabled (performance mode)
+  ../configure --disable-thread-safe-mux
+  
+  # Build
+  make
+  
+  # Install
+  sudo make install
+
+4.3 Runtime Requirements
+  • FFmpeg libraries (libavformat.so, libavcodec.so, etc.)
+  • Pango/Cairo shared libraries
+  • Fontconfig library
+  • TrueType/OpenType font files on system
+  • POSIX-compliant terminal (for proper help output formatting)
+
+
+5. QUICK START
+================================================================================
+
+5.1 Basic Usage
+  # Convert a single English SRT file
+  srt2dvbsub \
+    --input video.ts \
+    --output video_with_subs.ts \
+    --srt subtitles.srt \
+    --languages eng
+
+5.2 Multiple Subtitle Tracks
+  # Add English and German subtitles
+  srt2dvbsub \
+    --input video.ts \
+    --output video_with_subs.ts \
+    --srt eng_subs.srt,deu_subs.srt \
+    --languages eng,deu
+
+5.3 Custom Rendering Options
+  # Use custom font and colors
+  srt2dvbsub \
+    --input video.ts \
+    --output video_with_subs.ts \
+    --srt subtitles.srt \
+    --languages eng \
+    --font "Open Sans" \
+    --fontsize 36 \
+    --fgcolor "#ffffff" \
+    --outlinecolor "#000000"
+
+5.4 With Timing Adjustments
+  # Apply global delay and per-track delays
+  srt2dvbsub \
+    --input video.ts \
+    --output video_with_subs.ts \
+    --srt eng.srt,deu.srt \
+    --languages eng,deu \
+    --delay 100,200
+
+5.5 Quality Control Check Only
+  # Validate subtitles without encoding
+  srt2dvbsub \
+    --qc-only \
+    --srt subtitles.srt \
+    --languages eng
+
+
+6. COMMAND-LINE REFERENCE
+================================================================================
+
+6.1 Required Arguments
+  -I, --input FILE
+      Input media file path
+      • MPEG-TS, MP4, MKV, or other FFmpeg-supported format
+      • Used to detect video dimensions and stream information
+      • Path must be < 4096 bytes (PATH_MAX)
+      
+  -o, --output FILE
+      Output file path (MPEG-TS)
+      • Will contain original streams plus DVB subtitle tracks
+      • Existing file will be overwritten
+      • Path must be < 4096 bytes (PATH_MAX)
+      
+  -s, --srt FILES
+      Comma-separated list of SRT subtitle files
+      • Format: file1.srt,file2.srt,file3.srt
+      • ONLY SRT (SubRip) format is accepted
+      • SRT files MAY contain ASS/SSA formatting tags (e.g., {\an8}, {\c&H...})
+      • ASS tags within SRT files are ONLY evaluated and respected when --ass flag is used
+      • If a true/native ASS or SSA file is provided, the program will FAIL
+      • Each file corresponds to one subtitle track
+      • Paths must be < 4096 bytes (PATH_MAX)
+      • Files must be valid SubRip format
+      • Use without argument and next positional arg as auto-correct fallback
+      
+  -l, --languages CODES
+      Comma-separated list of DVB 3-letter language codes
+      • Format: eng,deu,fra,etc.
+      • Must have same count as --srt files
+      • Use --help to see complete list of valid codes
+
+
+6.2 Rendering & Appearance Options
+  --font FONTNAME
+      Font family name (default: DejaVu Sans)
+      • System font name as understood by Fontconfig
+      • Examples: "Arial", "Times New Roman", "Liberation Sans"
+      • Use --list-fonts to display available fonts
+      • Applies to all SRT tracks (per-track selection: planned feature)
+      
+  --font-style STYLE
+      Font style variant (e.g., Bold, Italic, Light)
+      • Examples: "Bold", "Italic", "Bold Italic", "Light"
+      • Combined with font family: "Arial Bold"
+      • Optional; if not specified uses font family default
+      
+  --fontsize N
+      Fixed font size in pixels (overrides dynamic sizing)
+      • Range: 8 to 72 (reasonable limits for TV viewing)
+      • Default behavior: size calculated from video resolution
+      • Use when dynamic sizing produces unsatisfactory results
+      • Too small: text unreadable; Too large: text clipped
+      
+  --fgcolor #RRGGBB
+      Text foreground color (default: white)
+      • Format: #RRGGBB hexadecimal (e.g., #ffffff for white)
+      • Must use quotes on shell: "--fgcolor '#00ff00'"
+      • Examples:
+        - #ffffff = white (default)
+        - #000000 = black
+        - #ffff00 = yellow
+        - #00ff00 = green
+      
+  --outlinecolor #RRGGBB
+      Text outline/stroke color (default: gray)
+      • Format: #RRGGBB hexadecimal
+      • Used for text edge definition and readability
+      • Examples:
+        - #000000 = black outline (high contrast)
+        - #808080 = gray (subtle outline)
+      
+  --shadowcolor #[AA]RRGGBB
+      Shadow color with optional alpha channel
+      • Format: #RRGGBB or #AARRGGBB (alpha optional)
+      • Alpha: 00 (transparent) to FF (opaque)
+      • Examples:
+        - #00000080 = semi-transparent black shadow
+        - #ff0000ff = opaque red shadow
+      • Shadow adds depth to text
+
+  --bg-color #RRGGBB
+      Background color for subtitle text box (optional)
+      • Format: #RRGGBB hexadecimal (RGB only, always opaque)
+      • When not specified: no background (transparent)
+      • Examples:
+        - #000000 = black background
+        - #ffffff = white background
+        - #404040 = dark gray background
+      • Background fills entire subtitle text bounding box with equal padding
+
+
+6.3 DVB Subtitle Options
+  --palette MODE
+      Palette mode for color reduction
+      • Modes: "ebu-broadcast", "broadcast", "web", "legacy"
+      • ebu-broadcast: EBU R207 standard colors (recommended for broadcast)
+      • broadcast: Broadcast standard palette
+      • web: Extended web-safe colors
+      • legacy: Historical/legacy color palette
+      • Default: ebu-broadcast
+      • Affects how colors are dithered to DVB palette
+      
+  --ssaa N
+      Supersample anti-aliasing factor (1..24)
+      • Default: 4 (render at 4x internal resolution, then downsample)
+      • Higher values: smoother text, slower rendering
+      • Lower values: faster rendering, possibly jagged text
+      • Reasonable range: 2-8 for most content
+      • Use --no-unsharp to disable unsharp filter on downsampled result
+      
+  --no-unsharp
+      Disable unsharp mask filter on rendered subtitles
+      • Unsharp mask sharpens text after anti-aliasing
+      • Disabling speeds up rendering but may blur text slightly
+      • Use if rendering performance is critical
+
+
+6.4 Timing & Delay Options
+  --delay MS[,MS2,...]
+      Subtitle delay in milliseconds
+      • Single value: applied to all tracks
+        Format: "--delay 100"  (100 ms delay for all tracks)
+      • Per-track values: comma-separated for each track
+        Format: "--delay 0,100,200"  (track 1: 0ms, track 2: 100ms, etc.)
+      • Positive: delay subtitles (appear later)
+      • Negative: advance subtitles (appear earlier)
+      • Range: -5000 to +5000 ms (reasonable limits)
+      • Applied before DVB encoding
+
+
+6.5 Subtitle Attributes
+  --forced
+      Mark all subtitle tracks as forced
+      • Forced subtitles appear only when default audio language differs
+      • Typical use: signs and text that must always be visible
+      • Affects DVB subtitle page composition
+      
+  --hi
+      Mark all subtitle tracks as hearing-impaired
+      • Hearing-impaired subtitles include sound descriptions
+      • Affects DVB subtitle page composition and signaling
+      • Example: "[DOOR OPENS]" or "[MUSIC PLAYING]"
+
+
+6.6 Performance & Threading
+  --render-threads N
+      Parallel rendering workers (default: 0 = single-threaded)
+      • 0: Synchronous rendering (no worker pool)
+      • 1-N: Use N background threads for parallel rendering
+      • Auto-capped at 2x CPU count (or 4 if CPU count unknown)
+      • Larger values: faster rendering on multi-core systems
+      • Trade-off: memory usage increases with thread count
+      • Default (0) is safe and simpler; increase for large batches
+      
+  --enc-threads N
+      Encoder thread count for FFmpeg (default: 0 = auto)
+      • 0: Auto-detect based on CPU count
+      • 1-N: Use N threads for video/audio encoding
+      • Shared with FFmpeg encoding, affects H.264/H.265 speeds
+      • Auto-capped at 2x CPU count (or 4 if CPU count unknown)
+      • Set this if baseline encoding is a bottleneck
+
+
+6.7 Debugging & Quality Control
+  --qc-only
+      Run subtitle file quality checks only (no MPEG-TS generation)
+      • Validates SRT files for syntax errors
+      • Checks timing continuity and overlaps
+      • Outputs report to qc_log.txt
+      • Useful for validating subtitle quality before full encode
+      • Exit code: 0 on success, 1 on validation failure
+      
+  --debug N
+      Set debug verbosity level (0=quiet, 1=errors, 2=verbose)
+      • 0: Suppress all debug output (errors only)
+      • 1: Show warnings and key info (default)
+      • 2: Verbose diagnostic information
+      • 3: Ultra-verbose (for development/troubleshooting)
+      • Output goes to stderr; does not affect MPEG-TS output
+      
+  --bench
+      Enable micro-benchmark timing output
+      • Measures rendering, encoding, and muxing times
+      • Output to stderr with per-track statistics
+      • Useful for performance analysis and optimization
+      • Does not affect output quality or format
+      
+  --png-dir PATH
+      Output debug PNG images to directory
+      • Saves rendered subtitle bitmaps as PNG files
+      • One PNG per subtitle event, named sequentially
+      • PATH must be writable; falls back to /tmp if needed
+      • Useful for visual inspection and debugging
+      • Can consume significant disk space for long videos
+
+
+6.8 Advanced Options
+  --ass
+      Enable libass subtitle rendering (requires --enable-ass build)
+      • Switches from Pango rendering to libass
+      • ASS format supports more formatting (italic, color per char, etc.)
+      • Requires libass 0.17.1+ to be available at build time
+      • May produce different visual results than Pango rendering
+      • Incompatible with some Pango-specific options
+      
+  --list-fonts
+      List available font families and styles
+      • Requires Fontconfig support at build time
+      • Output shows fonts installed on system
+      • Format: font_family [style1] [style2] ...
+      • Use font names in output with --font option
+      • Exits after printing (does not process subtitles)
+      
+  --license
+      Show license information and exit
+      • Displays Personal Use License terms
+      • Shows commercial licensing contact information
+      • Warranty disclaimer
+
+
+6.9 Help & Version
+  -h, --help, -?
+      Show help message and exit
+      • Displays all available options and language codes
+      • Language codes formatted for terminal width
+      • Shows examples of commonly used options
+      
+  (Version information)
+      Build git hash, tag, and build date in output
+      • Embedded at compile time via GIT_VERSION, GIT_COMMIT, GIT_DATE
+      • Useful for troubleshooting version-related issues
+
+
+7. CONFIGURATION OPTIONS
+================================================================================
+
+7.1 Build-Time Configuration
+  These options are set during ./configure and affect the binary.
+
+  --enable-ass
+      Enable ASS/SSA format rendering with libass
+      • Requires: libass 0.17.1 or later
+      • When enabled: --ass flag available at runtime
+      • Adds: Advanced SubStation Alpha format support
+      • Slower than Pango but supports more formatting
+      • Default: disabled (SRT and Pango rendering only)
+      
+  --disable-thread-safe-mux
+      Disable mutex guard around MPEG-TS multiplexing
+      • By default: mutex ensures thread-safe mux writes
+      • When disabled: Faster muxing but requires single-threaded mux
+      • Use only if you understand single-threaded implications
+      • Affects ENABLE_THREAD_SAFE_MUX compile flag
+      • Default: enabled (mutex guard active)
+
+7.2 Runtime Configuration
+  No runtime configuration files; all options via command-line flags.
+  
+  Recommended patterns for common scenarios:
+
+  Broadcast Quality (EBU Standard):
+    --palette ebu-broadcast \
+    --font "DejaVu Sans" \
+    --fontsize 36 \
+    --fgcolor "#ffffff" \
+    --outlinecolor "#000000" \
+    --ssaa 4
+
+  Web/Streaming Quality (faster):
+    --palette web \
+    --font "Arial" \
+    --fontsize 32 \
+    --fgcolor "#ffffff" \
+    --outlinecolor "#000000" \
+    --ssaa 2 \
+    --no-unsharp
+
+  High Performance (minimal rendering):
+    --render-threads 0 \
+    --ssaa 2 \
+    --no-unsharp
+
+  Batch Processing (with parallelism):
+    --render-threads 4 \
+    --enc-threads 4 \
+    --bench
+
+
+8. DVB LANGUAGE CODES
+================================================================================
+
+srt2dvbsub supports all standard DVB 3-letter ISO 639-2 language codes.
+Common codes include:
+
+  eng = English
+  deu = German
+  fra = French
+  spa = Spanish
+  ita = Italian
+  por = Portuguese
+  rus = Russian
+  jpn = Japanese
+  zho = Chinese
+  ara = Arabic
+  heb = Hebrew
+  pol = Polish
+  tur = Turkish
+  ell = Greek
+  swe = Swedish
+  dan = Danish
+  fin = Finnish
+  nor = Norwegian
+  nld = Dutch
+  hsa = Hungarian
+  ces = Czech
+  kat = Georgian
+  ron = Romanian
+  slk = Slovak
+  srp = Serbian
+  bul = Bulgarian
+  hrv = Croatian
+  ukr = Ukrainian
+
+Use --help to see the complete list of 100+ supported language codes
+formatted dynamically for your terminal width.
+
+
+9. EXAMPLES
+================================================================================
+
+9.1 Basic Multi-Language Conversion
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt english.srt,german.srt,french.srt \
+    --languages eng,deu,fra
+
+9.2 With Custom Fonts and Colors
+  srt2dvbsub \
+    --input video.ts \
+    --output video_styled.ts \
+    --srt subtitles.srt \
+    --languages eng \
+    --font "Liberation Sans" \
+    --fontsize 40 \
+    --fgcolor "#ffffff" \
+    --outlinecolor "#000000" \
+    --shadowcolor "#00000080"
+
+9.3 With Per-Track Delays
+  # Track 1: no delay, Track 2: 100ms delay, Track 3: 200ms delay
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt track1.srt,track2.srt,track3.srt \
+    --languages eng,spa,fra \
+    --delay 0,100,200
+
+9.4 Hearing-Impaired and Forced Subtitles
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt sdh.srt,forced.srt \
+    --languages eng,eng \
+    --hi \
+    --forced
+
+9.5 Quality Control Check
+  srt2dvbsub \
+    --qc-only \
+    --srt subtitles.srt \
+    --languages eng
+  
+  # Output written to qc_log.txt
+
+9.6 High Performance Batch Processing
+  srt2dvbsub \
+    --input batch_video.ts \
+    --output batch_output.ts \
+    --srt subs.srt \
+    --languages eng \
+    --render-threads 8 \
+    --enc-threads 8 \
+    --ssaa 2 \
+    --no-unsharp \
+    --bench
+
+9.7 ASS Format Support (when built with --enable-ass)
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt subtitles.ass \
+    --languages eng \
+    --ass
+
+9.8 Debug PNG Output
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt subtitles.srt \
+    --languages eng \
+    --png-dir ./debug_pngs \
+    --debug 2
+
+9.9 List Available Fonts
+  srt2dvbsub --list-fonts
+
+9.10 Show Help with Language Codes
+  srt2dvbsub --help
+
+
+10. OUTPUT & FILES
+================================================================================
+
+10.1 Main Output
+  • MPEG-TS file specified via --output
+    - Contains original video/audio streams
+    - DVB subtitle tracks multiplexed in
+    - Ready for broadcast, Blu-ray, or OTT distribution
+
+10.2 Quality Control Report (with --qc-only)
+  • qc_log.txt in current directory
+    - Subtitle syntax validation results
+    - Timing continuity checks
+    - Overlap detection
+    - Summary pass/fail status
+
+10.3 Debug Output (with --png-dir)
+  • PNG files in specified directory
+    - One file per subtitle event
+    - Named sequentially (e.g., 00000000.png, 00000001.png)
+    - Show rendered subtitle bitmap before DVB encoding
+    - Useful for visual inspection of rendering quality
+
+10.4 Benchmark Results (with --bench)
+  • Micro-timing statistics on stderr
+    - Parse time for SRT file
+    - Per-track rendering times
+    - Encoding times
+    - Muxing times
+    - Useful for performance analysis
+
+
+11. PERFORMANCE & TUNING
+================================================================================
+
+11.1 Rendering Performance
+  • --render-threads 0 (default, fastest for single-track)
+    Single-threaded rendering, minimal context switching
+    
+  • --render-threads N (N = 2-8, recommended for multi-track)
+    Parallel rendering of subtitle events
+    Best when N matches or is slightly more than CPU count
+    
+  • --ssaa 2 (fast) vs --ssaa 4 (default) vs --ssaa 8 (quality)
+    Lower SSAA = faster rendering but jagged text
+    Higher SSAA = smoother text but slower rendering
+    
+  • --no-unsharp (saves ~10-15% rendering time)
+    Disables unsharp filter after anti-aliasing
+    Small visual impact on most content
+
+11.2 Memory Usage
+  • Scales with render thread count
+    Each thread needs ~50-100MB for working buffers
+    
+  • Scales with SSAA factor
+    Higher SSAA = larger internal buffers
+    
+  • Scales with video resolution
+    1920x1080: ~200MB per thread
+    3840x2160: ~800MB per thread
+    
+  • Recommended: Allocate 2GB+ for multi-track 4K encoding
+
+11.3 Typical Benchmarks (on 8-core system)
+  • Single English track, 1080p:
+    - Serial mode: ~2x realtime
+    - --render-threads 4: ~1.5x realtime
+    
+  • Three language tracks, 1080p:
+    - Serial mode: ~6x realtime
+    - --render-threads 4: ~2x realtime
+    
+  • 4K content:
+    - Serial: ~8-10x realtime
+    - --render-threads 8: ~3-4x realtime
+    
+  • Benchmarks vary by: CPU speed, font complexity, text density,
+    video resolution, SSAA factor
+
+
+12. TROUBLESHOOTING
+================================================================================
+
+12.1 Common Issues
+
+  Q: "Out of memory" error
+  A: Reduce --render-threads or lower --ssaa value
+     Check available RAM: free -h or top
+     
+  Q: Text is blurry or jagged
+  A: Increase --ssaa (try 6 or 8 instead of default 4)
+     Or use --font with cleaner font family
+     
+  Q: Subtitles don't appear in output
+  A: Verify --languages codes match input SRT count
+     Check qc_log.txt for parsing errors (run --qc-only)
+     Verify video dimensions detected correctly (--debug 2)
+     
+  Q: Colors look wrong or washed out
+  A: Try different --palette mode (ebu-broadcast vs broadcast vs web)
+     Check --fgcolor and --outlinecolor are correctly specified
+     Verify --bg-color is set correctly if using backgrounds
+
+     
+  Q: Very slow rendering
+  A: Reduce --ssaa or enable --no-unsharp
+     Check system load (other processes consuming CPU/RAM)
+     Increase --render-threads on multi-core systems
+     
+  Q: Font not found
+  A: Run --list-fonts to see available fonts on system
+     Font names are case-sensitive
+     Use exact name from font listing output
+     
+  Q: "Font listing requires Fontconfig support"
+  A: Rebuild with Fontconfig development libraries
+     Or manually check system fonts in /usr/share/fonts
+     
+  Q: "Path exceeds PATH_MAX"
+  A: Use shorter paths or relative paths
+     PATH_MAX is typically 4096 bytes on POSIX systems
+
+12.2 Debug Mode
+  Use --debug 2 or --debug 3 for diagnostic information:
+  
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt subs.srt \
+    --languages eng \
+    --debug 2 2>&1 | tee debug.log
+
+12.3 Benchmarking
+  Use --bench for performance analysis:
+  
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt subs.srt \
+    --languages eng \
+    --bench 2>&1 | tee bench.log
+
+12.4 Visual Inspection
+  Use --png-dir to save debug PNG files:
+  
+  srt2dvbsub \
+    --input input.ts \
+    --output output.ts \
+    --srt subs.srt \
+    --languages eng \
+    --png-dir ./pngs
+
+
+13. LICENSE & SUPPORT
+================================================================================
+
+13.1 Personal Use License
+  srt2dvbsub is licensed under a Personal Use License:
+  
+  ✓ Free for personal, educational, and non-commercial use
+  ✓ Free to modify for personal projects
+  ✓ Source code available for inspection
+  
+  ✗ Commercial use requires a Commercial License
+  ✗ Cannot be sold or used in profit-generating business
+  ✗ Cannot be included in commercial products without license
+  
+  See --license flag for full license terms.
+
+13.2 Commercial Licensing
+  Commercial use (IPTV, broadcast, SaaS, etc.) requires:
+  • Paid Commercial License from copyright holder
+  • Contact: license@chili-iptv.info
+  • Website: www.chili-iptv.info
+
+13.3 Copyright
+  Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+  All rights reserved.
+
+13.4 Support & Issues
+  Report bugs and request features at:
+  • GitHub Issues: [repository URL]
+  • Email: bugs@chili-iptv.info
+  • For licensing: license@chili-iptv.info
+
+
+14. TECHNICAL DETAILS
+================================================================================
+
+14.1 Architecture
+  • CLI parsing: getopt_long for argument handling
+  • SRT parsing: Custom recursive descent parser (srt_parser.c)
+  • Text rendering: Pango + Cairo for high-quality bitmap output
+  • DVB encoding: FFmpeg-integrated DVB subtitle encoder
+  • Multiplexing: Direct MPEG-TS mux with FFmpeg
+  • Threading: Worker pool for parallel subtitle rendering
+  • Queue: Lock-free queue for subtitle event batching
+
+14.2 Subtitle Rendering Pipeline
+  1. Parse SRT file (srt_parser.c)
+  2. Validate subtitle timing and content
+  3. Render text to intermediate bitmap (Pango/Cairo or libass)
+  4. Dither bitmap to DVB palette
+  5. Generate DVB subtitle segments (Page Composition Segment)
+  6. Encode into DVB subtitle packets
+  7. Multiplex into MPEG-TS output
+
+14.3 Video Stream Handling
+  • Input: FFmpeg probes video dimensions and frame rate
+  • Font scaling: Font size calculated from video resolution
+  • Output: MPEG-TS with video, audio, and DVB subtitle tracks
+  • Clock reference: PCR (Program Clock Reference) maintained
+
+14.4 Performance Optimizations
+  • Worker thread pool: Parallel subtitle rendering
+  • Memory pooling: Pre-allocated buffers reused across renders
+  • Lock-free queues: Minimize thread synchronization overhead
+  • Dithering cache: Pre-computed dither patterns
+  • Bitmap caching: Re-use unchanged subtitles
+
+
+15. APPENDIX: DEPENDENCIES
+================================================================================
+
+Minimum Versions:
+  • C11 compiler (GCC 5.0+, Clang 3.8+)
+  • FFmpeg: libavformat 58.0, libavcodec 58.0, libavutil 56.0, libswscale 5.0
+  • Pango: 1.52.1
+  • Cairo: 1.18.0
+  • Fontconfig: 2.15.0
+  • libass: 0.17.1 (optional, for --enable-ass)
+
+Installation Examples:
+
+  Ubuntu/Debian:
+    sudo apt-get install libavformat-dev libavcodec-dev libavutil-dev \
+      libswscale-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev \
+      libass-dev pkg-config autotools-dev
+
+  Fedora/RHEL/CentOS:
+    sudo dnf install ffmpeg-devel pango-devel cairo-devel \
+      fontconfig-devel libass-devel pkg-config autotools
+
+  macOS (with Homebrew):
+    brew install ffmpeg pango cairo fontconfig libass pkg-config
+    brew install autoconf automake
+
+  FreeBSD:
+    pkg install ffmpeg pango cairo fontconfig libass pkgconf autotools
+
+
+================================================================================
+End of README.txt
+For more information, run: srt2dvbsub --help
+================================================================================

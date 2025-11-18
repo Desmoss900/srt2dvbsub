@@ -190,7 +190,25 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     int last_space = 0;
     while (p && *p) {
         unsigned char ch = (unsigned char)*p;
-        if (ch == '\n' || ch == '\r' || isspace(ch)) {
+        /* Preserve explicit newlines from SRT file, but collapse other whitespace */
+        if (ch == '\n') {
+            /* Explicit newline: preserve it (unless preceded by space to avoid "space\n") */
+            if (last_space && buf_len > 0 && buf[buf_len-1] == ' ') {
+                buf[buf_len-1] = '\n';  /* Replace trailing space with newline */
+            } else {
+                if (buf_len + 1 >= buf_cap) {
+                    size_t nc = buf_cap * 2 + 16;
+                    char *nt = realloc(buf, nc);
+                    if (!nt) goto oom;
+                    buf = nt; buf_cap = nc;
+                }
+                buf[buf_len++] = '\n';
+                buf[buf_len] = '\0';
+            }
+            last_space = 0;
+            p++;
+        } else if (ch == '\r' || isspace(ch)) {
+            /* Other whitespace (tabs, spaces, etc): collapse to single space */
             if (!last_space) {
                 if (buf_len + 1 >= buf_cap) {
                     size_t nc = buf_cap * 2 + 16;
@@ -223,11 +241,9 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     size_t out_len = 0;
     out[0] = '\0';
 
-    /* Tokenize using reentrant strtok_r */
+    /* Process buffer line-by-line, preserving explicit newlines from SRT file */
     tmp = strdup(buf);
     if (!tmp) goto oom;
-    char *saveptr = NULL;
-    char *tok = strtok_r(tmp, " ", &saveptr);
 
     int whole_cue_is_symbol = 0;
     char *plain = strip_tags(raw);
@@ -239,12 +255,103 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
 
     int line_len = 0, lines = 1;
 
-    while (tok) {
-        int wordlen = visible_len(tok);
-        int sym_line = (whole_cue_is_symbol && wordlen == 1);
+    /* Process line by line, respecting embedded newlines */
+    char *line_start = tmp;
+    while (line_start && *line_start) {
+        /* Find end of current line */
+        char *line_end = strchr(line_start, '\n');
+        size_t line_size = line_end ? (size_t)(line_end - line_start) : strlen(line_start);
+        
+        char *line_copy = strndup(line_start, line_size);
+        if (!line_copy) goto oom;
 
-        if (sym_line) {
-            if (line_len > 0) {
+        /* Tokenize the current line by spaces */
+        char *saveptr = NULL;
+        char *tok = strtok_r(line_copy, " ", &saveptr);
+
+        int has_content = 0;  /* Track if this source line has any content */
+        while (tok) {
+            has_content = 1;
+            int wordlen = visible_len(tok);
+            int sym_line = (whole_cue_is_symbol && wordlen == 1);
+
+            if (sym_line) {
+                if (line_len > 0) {
+                    if (out_len + 1 >= out_cap) {
+                        size_t nc = out_cap * 2 + 16;
+                        char *nt = realloc(out, nc);
+                        if (!nt) { free(line_copy); goto oom; }
+                        out = nt; out_cap = nc;
+                    }
+                    out[out_len++] = '\n'; out[out_len] = '\0';
+                    lines++;
+                }
+                size_t tlen = strlen(tok);
+                if (out_len + tlen >= out_cap) {
+                    size_t nc = out_len + tlen + 16;
+                    char *nt = realloc(out, nc);
+                    if (!nt) { free(line_copy); goto oom; }
+                    out = nt; out_cap = nc;
+                }
+                memcpy(out + out_len, tok, tlen);
+                out_len += tlen; out[out_len] = '\0';
+                line_len = wordlen;
+            }
+            else if (wordlen > 0 && line_len + wordlen + 1 > max_chars && lines < max_lines) {
+                /* break line */
+                if (out_len + 1 >= out_cap) {
+                    size_t nc = out_cap * 2 + 16;
+                    char *nt = realloc(out, nc);
+                    if (!nt) { free(line_copy); goto oom; }
+                    out = nt; out_cap = nc;
+                }
+                out[out_len++] = '\n'; out[out_len] = '\0';
+                line_len = 0; 
+                lines++;
+
+                size_t tlen = strlen(tok);
+                if (out_len + tlen >= out_cap) {
+                    size_t nc = out_len + tlen + 16;
+                    char *nt = realloc(out, nc);
+                    if (!nt) { free(line_copy); goto oom; }
+                    out = nt; out_cap = nc;
+                }
+                memcpy(out + out_len, tok, tlen);
+                out_len += tlen; out[out_len] = '\0';
+                line_len = wordlen;
+            }
+            else {
+                if (wordlen > 0 && line_len > 0) {
+                    if (out_len + 1 >= out_cap) {
+                        size_t nc = out_cap * 2 + 16;
+                        char *nt = realloc(out, nc);
+                        if (!nt) { free(line_copy); goto oom; }
+                        out = nt; out_cap = nc;
+                    }
+                    out[out_len++] = ' '; out[out_len] = '\0';
+                    line_len++;
+                }
+                size_t tlen = strlen(tok);
+                if (out_len + tlen >= out_cap) {
+                    size_t nc = out_len + tlen + 16;
+                    char *nt = realloc(out, nc);
+                    if (!nt) { free(line_copy); goto oom; }
+                    out = nt; out_cap = nc;
+                }
+                memcpy(out + out_len, tok, tlen);
+                out_len += tlen; out[out_len] = '\0';
+                line_len += wordlen;
+            }
+
+            tok = strtok_r(NULL, " ", &saveptr);
+        }
+
+        free(line_copy);
+
+        /* Move to next source line (preserve the newline between lines) */
+        if (line_end) {
+            /* Add newline between source lines if this line had content */
+            if (has_content) {
                 if (out_len + 1 >= out_cap) {
                     size_t nc = out_cap * 2 + 16;
                     char *nt = realloc(out, nc);
@@ -252,65 +359,13 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     out = nt; out_cap = nc;
                 }
                 out[out_len++] = '\n'; out[out_len] = '\0';
+                lines++;
+                line_len = 0;
             }
-            size_t tlen = strlen(tok);
-            if (out_len + tlen >= out_cap) {
-                size_t nc = out_len + tlen + 16;
-                char *nt = realloc(out, nc);
-                if (!nt) goto oom;
-                out = nt; out_cap = nc;
-            }
-            memcpy(out + out_len, tok, tlen);
-            out_len += tlen; out[out_len] = '\0';
-            line_len = wordlen;
-            lines++;
+            line_start = line_end + 1;
+        } else {
+            break;
         }
-        else if (wordlen > 0 && line_len + wordlen + 1 > max_chars && lines < max_lines) {
-            /* break line */
-            if (out_len + 1 >= out_cap) {
-                size_t nc = out_cap * 2 + 16;
-                char *nt = realloc(out, nc);
-                if (!nt) goto oom;
-                out = nt; out_cap = nc;
-            }
-            out[out_len++] = '\n'; out[out_len] = '\0';
-            line_len = 0; lines++;
-
-            size_t tlen = strlen(tok);
-            if (out_len + tlen >= out_cap) {
-                size_t nc = out_len + tlen + 16;
-                char *nt = realloc(out, nc);
-                if (!nt) goto oom;
-                out = nt; out_cap = nc;
-            }
-            memcpy(out + out_len, tok, tlen);
-            out_len += tlen; out[out_len] = '\0';
-            line_len = wordlen;
-        }
-        else {
-            if (wordlen > 0 && line_len > 0) {
-                if (out_len + 1 >= out_cap) {
-                    size_t nc = out_cap * 2 + 16;
-                    char *nt = realloc(out, nc);
-                    if (!nt) goto oom;
-                    out = nt; out_cap = nc;
-                }
-                out[out_len++] = ' '; out[out_len] = '\0';
-                line_len++;
-            }
-            size_t tlen = strlen(tok);
-            if (out_len + tlen >= out_cap) {
-                size_t nc = out_len + tlen + 16;
-                char *nt = realloc(out, nc);
-                if (!nt) goto oom;
-                out = nt; out_cap = nc;
-            }
-            memcpy(out + out_len, tok, tlen);
-            out_len += tlen; out[out_len] = '\0';
-            line_len += wordlen;
-        }
-
-        tok = strtok_r(NULL, " ", &saveptr);
     }
 
     free(tmp);
@@ -566,6 +621,7 @@ err:
 static int parse_srt_internal(const char *filename, SRTEntry **entries_out, FILE *qc,
                               int use_ass_local, int video_w_local, int video_h_local) {
     extern int debug_level;
+    
     FILE *f = fopen(filename, "r");
     if (!f) {
         if (debug_level > 0) {
@@ -683,6 +739,8 @@ static int parse_srt_internal(const char *filename, SRTEntry **entries_out, FILE
                 return -1;
             }
             remove_ass_h(norm);
+            /* Strip any trailing newlines/CR that might have been added during normalization */
+            rstrip(norm);
     }
 
         (*entries_out)[n].start_ms = start;

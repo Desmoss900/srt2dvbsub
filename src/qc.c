@@ -200,6 +200,8 @@ void qc_check_entry(const char *filename, int cue_idx,
             curlen = 0;
             lines++;
             t++;
+            /* Check if this is the last character - if so, don't count the trailing newline */
+            if (!*t) lines--;
             continue;
         }
         int adv = 1;

@@ -154,6 +154,7 @@
  *   cli_fgcolor         Foreground color for CLI rendering.
  *   cli_outlinecolor    Outline color for CLI rendering.
  *   cli_shadowcolor     Shadow color for CLI rendering.
+ *   cli_bgcolor         Background color for CLI rendering.
  *   subtitle_delay_list List of subtitle delay values.
  *   delay_vals          Array of delay values for each track.
  *   out_fmt             Output format context (FFmpeg).
@@ -179,6 +180,7 @@ struct MainCtx {
     const char *cli_fgcolor;
     const char *cli_outlinecolor;
     const char *cli_shadowcolor;
+    const char *cli_bgcolor;
     char *subtitle_delay_list;
     int *delay_vals;
     AVFormatContext *out_fmt;
@@ -253,6 +255,7 @@ static int finalize_main(struct MainCtx *ctx, bool ctx_cleaned, int ret)
  * @param cli_fgcolor Pointer to store the CLI foreground color string.
  * @param cli_outlinecolor Pointer to store the CLI outline color string.
  * @param cli_shadowcolor Pointer to store the CLI shadow color string.
+ * @param cli_bgcolor Pointer to store the CLI background color string.
  * @param debug_level Pointer to store the debug level.
  * @param use_ass_flag Pointer to store the ASS subtitle rendering flag (if available).
  *
@@ -281,6 +284,7 @@ static int cli_parse(int argc, char **argv,
                           const char **cli_fgcolor,
                           const char **cli_outlinecolor,
                           const char **cli_shadowcolor,
+                          const char **cli_bgcolor,
                           int *debug_level,
                           int *use_ass_flag)
 {
@@ -306,6 +310,7 @@ static int cli_parse(int argc, char **argv,
         {"fgcolor", required_argument, 0, 1009},
         {"outlinecolor", required_argument, 0, 1010},
         {"shadowcolor", required_argument, 0, 1011},
+        {"bg-color", required_argument, 0, 1021},
         {"delay", required_argument, 0, 1012},
         {"enc-threads", required_argument, 0, 1013},
         {"render-threads", required_argument, 0, 1014},
@@ -479,6 +484,23 @@ static int cli_parse(int argc, char **argv,
                 return 1;
             }
             ctx->cli_shadowcolor = *cli_shadowcolor;
+            break;
+        case 1021:
+            {
+                char color_err[256] = {0};
+                int ret = validate_color(optarg, color_err);
+                if (ret != 0) {
+                    LOG(0, "Background color validation error: %s\n", color_err);
+                    LOG(0, "Valid format: %s\n", get_color_usage());
+                    return 1;
+                }
+            }
+            if (replace_strdup(cli_bgcolor, optarg) != 0) {
+                LOG(0, "Out of memory while setting background color\n");
+                return 1;
+            }
+            ctx->cli_bgcolor = *cli_bgcolor;
+            LOG(0, "DEBUG: Set background color to: %s\n", *cli_bgcolor);
             break;
         case 1012:
             /* Parse and validate subtitle delay with better error messages */
@@ -669,13 +691,24 @@ static int ctx_init(struct MainCtx *ctx,
     av_dict_set(&fmt_opts, "buffer_size", "10485760", 0); /* 10 MiB read buffer */
     if (avformat_open_input(&in_fmt, input, NULL, &fmt_opts) < 0) {
         av_dict_free(&fmt_opts);
-        LOG(0, "Cannot open input\n");
+        LOG(0, "Cannot open input file '%s': file not found or unsupported format\n", input);
         return -1;
     }
     av_dict_free(&fmt_opts);
     ctx->in_fmt = in_fmt;
 
     avformat_find_stream_info(in_fmt, NULL);
+    
+    /* Validate input is MPEG-TS format */
+    if (!in_fmt->iformat || !in_fmt->iformat->name || 
+        (strcmp(in_fmt->iformat->name, "mpegts") != 0 && 
+         strcmp(in_fmt->iformat->name, "mpeg2ts") != 0)) {
+        if (debug_level > 0 || 1) {  /* Always warn, not just debug mode */
+            LOG(0, "Warning: Input file '%s' is not MPEG-TS format (detected: %s)\n", 
+                input, in_fmt->iformat ? in_fmt->iformat->name : "unknown");
+            LOG(0, "This program is designed for MPEG-TS inputs. Other formats may produce unexpected results.\n");
+        }
+    }
 
     int video_index = -1, first_audio_index = -1;
     for (unsigned i = 0; i < in_fmt->nb_streams; i++) {
@@ -945,6 +978,11 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
                 int64_t delta_parse = bench_now() - t0;
                 bench_add_parse_us(delta_parse);
             }
+            if (count < 0) {
+                LOG(0, "Failed to parse SRT file '%s': invalid SRT format or file not found\n", tok);
+                ctx_cleanup(ctx);
+                return 1;
+            }
             tracks[*ntracks].count = count;
             if (debug_level > 0) {
                 LOG(1, "Parsed %d cues from SRT '%s' for track %d\n", count, tok, *ntracks);
@@ -1111,6 +1149,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
     const char *cli_fgcolor = ctx->cli_fgcolor;
     const char *cli_outlinecolor = ctx->cli_outlinecolor;
     const char *cli_shadowcolor = ctx->cli_shadowcolor;
+    const char *cli_bgcolor = ctx->cli_bgcolor;
     const char *palette_mode = ctx->palette_mode;
 
     /* Track first video PTS (90k) so we can emit a tiny blank subtitle when
@@ -1246,7 +1285,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                          render_w, render_h,
                                                          cli_fontsize, cli_font,
                                                          cli_font_style,
-                                                         cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                                         cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                          used_align,
                                                          palette_mode);
                         }
@@ -1264,7 +1303,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                          render_w, render_h,
                                                          cli_fontsize, cli_font,
                                                          cli_font_style,
-                                                         cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                                         cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                          used_align,
                                                          palette_mode);
                                 free(pm);
@@ -1279,7 +1318,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                              render_w, render_h,
                                                              cli_fontsize, cli_font,
                                                              cli_font_style,
-                                                             cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                                             cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                              used_align,
                                                              palette_mode);
                             }
@@ -1291,7 +1330,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                render_w, render_h,
                                                cli_fontsize, cli_font,
                                                cli_font_style,
-                                               cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                                               cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                used_align,
                                                palette_mode);
                     }
@@ -1634,9 +1673,12 @@ static int ctx_run_qc_only(struct MainCtx *ctx,
             int64_t delta_parse = bench_now() - t0;
             bench_add_parse_us(delta_parse);
         }
-        if (count < 0)
-            count = 0;
         int file_errors = qc_error_count;
+        if (count < 0) {
+            LOG(1, "QC: Failed to parse '%s': invalid SRT format or file not found\n", fnames[i]);
+            count = 0;
+            file_errors++;
+        }
 
         summaries[i].filename = fnames[i];
         summaries[i].cues = count;
@@ -1789,7 +1831,7 @@ static void ctx_cleanup(struct MainCtx *ctx)
         free((void *)ctx->palette_mode);
     }
     ctx->palette_mode = NULL;
-    if (ctx->cli_font && strcmp(ctx->cli_font, "DejaVu Sans") != 0) {
+    if (ctx->cli_font && strcmp(ctx->cli_font, "Open Sans") != 0) {
         free((void *)ctx->cli_font);
     }
     ctx->cli_font = NULL;
@@ -1809,6 +1851,10 @@ static void ctx_cleanup(struct MainCtx *ctx)
         free((void *)ctx->cli_shadowcolor);
     }
     ctx->cli_shadowcolor = NULL;
+    if (ctx->cli_bgcolor) {
+        free((void *)ctx->cli_bgcolor);
+    }
+    ctx->cli_bgcolor = NULL;
     if (ctx->subtitle_delay_list) {
         free(ctx->subtitle_delay_list);
         ctx->subtitle_delay_list = NULL;
@@ -2010,7 +2056,7 @@ int main(int argc, char **argv)
     char *subtitle_delay_list = NULL;
 
     /* Subtitle style config (shared for ASS and Pango) */
-    const char *cli_font = "DejaVu Sans";
+    const char *cli_font = "Open Sans";
     const char *cli_font_style = NULL;
 
     /* 0 means "not set" — let render_pango compute dynamic sizing based on resolution */
@@ -2020,10 +2066,12 @@ int main(int argc, char **argv)
      * cli_fgcolor: Foreground color for subtitle text, specified as a hex string compatible with Pango.
      * cli_outlinecolor: Outline color for subtitle text, specified as a hex string.
      * cli_shadowcolor: Shadow color for subtitle text, specified as a hex string with alpha channel.
+     * cli_bgcolor: Background color for subtitle box, specified as #RRGGBB (6 hex digits, always opaque).
      */
     const char *cli_fgcolor = "#FFFFFF"; /* hex for Pango */
     const char *cli_outlinecolor = "#000000";
     const char *cli_shadowcolor = "#64000000";
+    const char *cli_bgcolor = NULL;  /* Background color: #RRGGBB format (optional, default transparent) */
 
     /* Context to own top-level allocations as they're created. Populate
      * fields as CLI options are parsed so early failures can safely call
@@ -2036,6 +2084,7 @@ int main(int argc, char **argv)
     ctx.cli_fgcolor = cli_fgcolor;
     ctx.cli_outlinecolor = cli_outlinecolor;
     ctx.cli_shadowcolor = cli_shadowcolor;
+    ctx.cli_bgcolor = cli_bgcolor;
 
     /*
      * ass_lib: Pointer to the ASS_Library instance, used for managing libass library resources.
@@ -2064,12 +2113,13 @@ int main(int argc, char **argv)
                                       &cli_fgcolor,
                                       &cli_outlinecolor,
                                       &cli_shadowcolor,
+                                      &cli_bgcolor,
                                       &debug_level,
                                       &use_ass);
     if (parse_status >= 0)
         return finalize_main(&ctx, ctx_cleaned, parse_status);
 
-    /* 
+    /*
      * Configure libav logging verbosity to match our --debug level. We map
      * our conservative 0/1/2 levels to libav's levels to avoid noisy output
      * except when the user explicitly requests diagnostics. This controls
@@ -2082,13 +2132,30 @@ int main(int argc, char **argv)
     else
         av_log_set_level(AV_LOG_QUIET);
 
+    /* Validate and resolve font and style */
+    char *resolved_font = NULL;
+    char *resolved_style = NULL;
+    if (validate_and_resolve_font(cli_font, cli_font_style, &resolved_font, &resolved_style) != 0) {
+        ret = 1;
+        ctx_cleanup(&ctx);
+        return finalize_main(&ctx, ctx_cleaned, ret);
+    }
+    ctx.cli_font = resolved_font;
+    ctx.cli_font_style = resolved_style;
+    
+    /* Output encoding status with font information */
+    printf("Encoding the subtitles with font: %s", resolved_font);
+    if (resolved_style) {
+        printf(" and style: %s\n\n", resolved_style);
+    } else {
+        printf(" and style: (default)\n\n");
+    }
+
     /*
      * Starts the benchmarking timer to measure the execution time of subsequent code.
      */
     bench_start();
-    bench_set_enabled(bench_mode);
-
-    /* 
+    bench_set_enabled(bench_mode);    /* 
      * Apply user-specified render tuning before any renderers are created.
      * - ssaa_override: forces the supersampling multiplier used by the
      *   Pango renderer. Larger values improve edge quality at the cost of CPU.

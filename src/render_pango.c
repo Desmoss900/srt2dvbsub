@@ -48,6 +48,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "render_pango.h"
 #include "palette.h"
+#include "debug.h"
 #include <cairo/cairo.h>
 #include <pango/pangocairo.h>
 #include <stdlib.h>
@@ -575,6 +576,7 @@ Bitmap render_text_pango(const char *markup,
                           const char *fgcolor,
                           const char *outlinecolor,
                           const char *shadowcolor,
+                          const char *bgcolor,
                           int align_code,
                           const char *palette_mode) {
     Bitmap bm={0};
@@ -650,7 +652,7 @@ Bitmap render_text_pango(const char *markup,
     }
 
     /* Create common font description */
-    const char *base_family = (fontfam && *fontfam) ? fontfam : "DejaVu Sans";
+    const char *base_family = (fontfam && *fontfam) ? fontfam : "Open Sans";
     char *desc_string = NULL;
     if (fontstyle && *fontstyle) {
         size_t len = strlen(base_family) + 1 + strlen(fontstyle) + 1;
@@ -688,14 +690,11 @@ Bitmap render_text_pango(const char *markup,
 
     pango_layout_get_pixel_size(layout_dummy, &lw, &lh);
 
-    /* Debug resolved font */
-   
-
     /* --- Placement in full frame --- */
-    int margin_y = disp_h * 0.038;
+    /* Position so bottom of text is 3% from bottom of frame */
     int text_x = (disp_w - lw) / 2;
-    int text_y = disp_h - margin_y - lh;
-    if (align_code >= 7) text_y = margin_y;
+    int text_y = disp_h - (int)(disp_h * 0.038) - lh;
+    if (align_code >= 7) text_y = (int)(disp_h * 0.038);
     else if (align_code >= 4 && align_code <= 6) text_y = (disp_h - lh) / 2;
 
     /* --- Adaptive supersampled rendering surface ---
@@ -753,16 +752,33 @@ Bitmap render_text_pango(const char *markup,
     pango_layout_set_markup(layout_real, markup, -1);
 
     // Background
-    if (add_bg) {
+    double bgr=0, bgg=0, bgb=0, bga=0;
+    if (bgcolor) {
+        LOG(2, "DEBUG: Rendering background color: %s\n", bgcolor);
+        parse_bgcolor(bgcolor, &bgr, &bgg, &bgb, &bga);
+        LOG(2, "DEBUG: Parsed RGBA values: r=%f g=%f b=%f a=%f\n", bgr, bgg, bgb, bga);
+        LOG(2, "DEBUG: cairo_set_source_rgba(cr, %f, %f, %f, %f)\n", bgr, bgg, bgb, bga);
+        cairo_set_source_rgba(cr, bgr, bgg, bgb, bga);
+        LOG(2, "DEBUG: Drawing rectangle from (0,0) to (%d,%d)\n", lw+2*pad, lh+2*pad);
+        cairo_rectangle(cr, 0, 0, lw+2*pad, lh+2*pad);
+        cairo_fill(cr);
+        LOG(2, "DEBUG: Background rectangle filled\n");
+    } else if (add_bg) {
+        /* Fallback to semi-transparent black if no bgcolor specified */
         cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
         cairo_rectangle(cr, 0, 0, lw+2*pad, lh+2*pad);
         cairo_fill(cr);
+    } else {
+        LOG(2, "DEBUG: No background specified (bgcolor=%p, add_bg=%d)\n", bgcolor, add_bg);
     }
 
     double fr,fg,fb,fa, or_,og,ob,oa, sr,sg,sb,sa;
     parse_hex_color(fgcolor, &fr,&fg,&fb,&fa);
     parse_hex_color(outlinecolor, &or_,&og,&ob,&oa);
     parse_hex_color(shadowcolor, &sr,&sg,&sb,&sa);
+
+    /* Translate to center text within the padded bounding box */
+    cairo_translate(cr, (double)pad, (double)pad);
 
     // Shadow first: make the offset proportional to supersample / fontsize
     if (shadowcolor) {
@@ -1284,6 +1300,13 @@ Bitmap render_text_pango(const char *markup,
     int fg_palette_idx = nearest_palette_index_display(bm.palette, 16,
                                                        fg_disp_r, fg_disp_g, fg_disp_b, 255);
 
+    /* precompute background premultiplied display components if bgcolor specified */
+    double bg_disp_r = bgr * 255.0;
+    double bg_disp_g = bgg * 255.0;
+    double bg_disp_b = bgb * 255.0;
+    int bg_palette_idx = bgcolor ? nearest_palette_index_display(bm.palette, 16,
+                                                                  bg_disp_r, bg_disp_g, bg_disp_b, 255) : 0;
+
     /* Apply Floyd–Steinberg error-diffusion dithering to reduce banding and
      * blockiness when mapping down to the limited 16-color palette. We keep
      * per-channel error buffers for the current and next row. */
@@ -1322,7 +1345,28 @@ Bitmap render_text_pango(const char *markup,
              * when compositing semi-transparent pixels into the 16-color
              * palette. Errors are propagated in display units (0..255). */
             if (a >= 220) {
-                bm.idxbuf[yy*w+xx] = fg_palette_idx;
+                /* For opaque pixels, distinguish between foreground (text) and background.
+                 * Check color distance: if pixel is close to background color, use bg_palette_idx;
+                 * otherwise use fg_palette_idx (foreground text). */
+                uint8_t pr = (argb >> 16) & 0xFF;
+                uint8_t pg = (argb >> 8) & 0xFF;
+                uint8_t pb = argb & 0xFF;
+                
+                if (bgcolor) {
+                    /* Compute distance to both foreground and background in RGB space */
+                    double dist_to_fg = fabs((double)pr - fg_disp_r) + 
+                                       fabs((double)pg - fg_disp_g) + 
+                                       fabs((double)pb - fg_disp_b);
+                    double dist_to_bg = fabs((double)pr - bg_disp_r) + 
+                                       fabs((double)pg - bg_disp_g) + 
+                                       fabs((double)pb - bg_disp_b);
+                    
+                    /* Use background index if pixel is closer to background color */
+                    int idx = (dist_to_bg < dist_to_fg) ? bg_palette_idx : fg_palette_idx;
+                    bm.idxbuf[yy*w+xx] = idx;
+                } else {
+                    bm.idxbuf[yy*w+xx] = fg_palette_idx;
+                }
                 err_r_cur[xx+1] = err_g_cur[xx+1] = err_b_cur[xx+1] = 0.0;
                 continue;
             }
@@ -1675,17 +1719,29 @@ final_cleanup:
 }
 
 void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a) {
+    /*
+     * Parses hex color strings in two formats:
+     *   #RRGGBB     - 6-char format (RGB with opaque alpha=1.0)
+     *   #AARRGGBB   - 8-char format (Alpha + RGB, where AA is alpha from 00-FF)
+     * 
+     * Examples:
+     *   #FFFFFF     = opaque white
+     *   #000000     = opaque black
+     *   #FF000000   = opaque black (AA=FF, RGB=000000)
+     *   #00000000   = fully transparent black (AA=00, RGB=000000)
+     *   #80FF0000   = semi-transparent red (AA=80, RGB=FF0000)
+     */
     if (!hex || hex[0] != '#') { *r=*g=*b=1.0; *a=1.0; return; }
     unsigned int rr=255, gg=255, bb=255, aa=255;
     size_t hlen = strlen(hex);
     if (hlen==7) {
-        /* #RRGGBB */
+        /* #RRGGBB - 6 chars + # = 7 total */
         if (sscanf(hex+1, "%02x%02x%02x", &rr, &gg, &bb) != 3) {
             /* malformed; fall back to white */
             rr = gg = bb = 255;
         }
     } else if (hlen==9) {
-        /* #AARRGGBB (header documents AARRGGBB order) */
+        /* #AARRGGBB - 8 chars + # = 9 total */
         unsigned int aa_t=255, rr_t=255, gg_t=255, bb_t=255;
         if (sscanf(hex+1, "%02x%02x%02x%02x", &aa_t, &rr_t, &gg_t, &bb_t) != 4) {
             aa_t = rr_t = gg_t = bb_t = 255;
@@ -1693,4 +1749,197 @@ void parse_hex_color(const char *hex, double *r, double *g, double *b, double *a
         aa = aa_t; rr = rr_t; gg = gg_t; bb = bb_t;
     }
     *r=rr/255.0; *g=gg/255.0; *b=bb/255.0; *a=aa/255.0;
+}
+
+void parse_bgcolor(const char *hex, double *r, double *g, double *b, double *a) {
+    /*
+     * Parses background color hex strings in #RRGGBB format only (6 hex digits).
+     * Background color is always opaque (alpha=1.0).
+     * 
+     * Examples:
+     *   #FFFFFF     = opaque white
+     *   #000000     = opaque black
+     *   #FF0000     = opaque red
+     */
+    if (!hex || hex[0] != '#') { *r=*g=*b=1.0; *a=1.0; return; }
+    unsigned int rr=255, gg=255, bb=255;
+    size_t hlen = strlen(hex);
+    if (hlen==7) {
+        /* #RRGGBB - 6 chars + # = 7 total */
+        if (sscanf(hex+1, "%02x%02x%02x", &rr, &gg, &bb) != 3) {
+            /* malformed; fall back to white */
+            rr = gg = bb = 255;
+        } else {
+            LOG(2, "DEBUG parse_bgcolor: sscanf returned rr=%u gg=%u bb=%u from string '%s'\n", rr, gg, bb, hex);
+        }
+    } else {
+        /* Invalid length; fall back to white and log warning if debugging */
+        LOG(2, "DEBUG parse_bgcolor: invalid length %zu, expected 7 for hex='%s'\n", hlen, hex);
+        rr = gg = bb = 255;
+    }
+    *r=rr/255.0; *g=gg/255.0; *b=bb/255.0; *a=1.0;  /* alpha always 1.0 (opaque) */
+    LOG(2, "DEBUG parse_bgcolor: returning r=%f g=%f b=%f a=%f\n", *r, *g, *b, *a);
+}
+
+
+/*
+ * Check if a font family exists on the system using Fontconfig.
+ */
+int font_exists(const char *font_name) {
+    if (!font_name) return 0;
+    
+    PangoFontMap *fontmap = pango_cairo_font_map_get_default();
+    if (!fontmap) return 0;
+    
+    PangoContext *ctx = pango_font_map_create_context(fontmap);
+    if (!ctx) return 0;
+    
+    PangoFontDescription *desc = pango_font_description_from_string(font_name);
+    if (!desc) {
+        g_object_unref(ctx);
+        return 0;
+    }
+    
+    PangoFont *font = pango_context_load_font(ctx, desc);
+    int exists = (font != NULL) ? 1 : 0;
+    
+    if (font) g_object_unref(font);
+    pango_font_description_free(desc);
+    g_object_unref(ctx);
+    
+    return exists;
+}
+
+/*
+ * Check if a specific font style exists for a font family.
+ */
+int font_style_exists(const char *font_name, const char *style_name) {
+    if (!font_name || !style_name) return 0;
+    
+    /* Create full font description with style */
+    char full_font[512];
+    snprintf(full_font, sizeof(full_font), "%s %s", font_name, style_name);
+    
+    return font_exists(full_font);
+}
+
+/*
+ * Validate and resolve font family and style.
+ *
+ * Priority for font selection:
+ * 1. If user specified --font and it exists, use it
+ * 2. If user specified --font but it doesn't exist, try preferred defaults
+ * 3. If no user font, try preferred defaults
+ * 4. If all fail, error out
+ *
+ * For style:
+ * 1. If user specified --font-style and it exists for the font, use it
+ * 2. Try fallbacks: "Light", "Thin", "Medium", "Regula"Medium"r"
+ * 3. Default to NULL (use Pango default)
+ */
+int validate_and_resolve_font(const char *user_font, const char *user_style,
+                               char **out_font, char **out_style) {
+    extern int debug_level;
+    
+    const char *preferred_fonts[] = {"Open Sans", "Roboto", "DejaVu Sans", NULL};
+    const char *fallback_styles[] = {"Light", "Thin", "Medium", "Regular", NULL};
+    
+    const char *resolved_font = NULL;
+    const char *resolved_style = NULL;
+    
+    /* Try to resolve font */
+    if (user_font) {
+        if (font_exists(user_font)) {
+            resolved_font = user_font;
+        } else {
+            if (debug_level > 0) {
+                LOG(1, "Font '%s' not found on system. Trying preferred fonts...\n", user_font);
+            }
+            /* Fall back to preferred fonts */
+            for (int i = 0; preferred_fonts[i]; i++) {
+                if (font_exists(preferred_fonts[i])) {
+                    resolved_font = preferred_fonts[i];
+                    LOG(1, "Using fallback font: %s\n", resolved_font);
+                    break;
+                }
+            }
+        }
+    } else {
+        /* No user font specified, try preferred fonts */
+        for (int i = 0; preferred_fonts[i]; i++) {
+            if (font_exists(preferred_fonts[i])) {
+                resolved_font = preferred_fonts[i];
+                break;
+            }
+        }
+    }
+    
+    /* If no font found, error out */
+    if (!resolved_font) {
+        LOG(0, "ERROR: No suitable font found on system.\n");
+        LOG(0, "Please install one of the following fonts:\n");
+        for (int i = 0; preferred_fonts[i]; i++) {
+            LOG(0, "  - %s\n", preferred_fonts[i]);
+        }
+        return -1;
+    }
+    
+    /* Try to resolve style */
+    if (user_style) {
+        if (font_style_exists(resolved_font, user_style)) {
+            resolved_style = user_style;
+        } else {
+            if (debug_level > 0) {
+                LOG(1, "Font style '%s' not found for font '%s'. Trying fallbacks...\n", 
+                    user_style, resolved_font);
+            }
+            /* Try fallback styles */
+            for (int i = 0; fallback_styles[i]; i++) {
+                if (font_style_exists(resolved_font, fallback_styles[i])) {
+                    resolved_style = fallback_styles[i];
+                    if (debug_level > 0) {
+                        LOG(1, "Using fallback style: %s\n", resolved_style);
+                    }
+                    break;
+                }
+            }
+        }
+    } else {
+        /* No user style specified, try preferred defaults */
+        for (int i = 0; fallback_styles[i]; i++) {
+            if (font_style_exists(resolved_font, fallback_styles[i])) {
+                resolved_style = fallback_styles[i];
+                break;
+            }
+        }
+    }
+    
+    /* Allocate output strings */
+    if (resolved_font) {
+        *out_font = strdup(resolved_font);
+        if (!*out_font) {
+            LOG(0, "Out of memory allocating font name\n");
+            return -1;
+        }
+    } else {
+        *out_font = NULL;
+    }
+    
+    if (resolved_style) {
+        *out_style = strdup(resolved_style);
+        if (!*out_style) {
+            LOG(0, "Out of memory allocating font style\n");
+            free(*out_font);
+            *out_font = NULL;
+            return -1;
+        }
+    } else {
+        *out_style = NULL;
+    }
+    
+    if (debug_level > 0) {
+        LOG(1, "Resolved font: %s %s\n", *out_font, *out_style ? *out_style : "(default style)");
+    }
+    
+    return 0;
 }
