@@ -763,13 +763,14 @@ void render_ass_set_style(ASS_Track *track,
                           const char *font, int size,
                           const char *fg, const char *outline, const char *shadow)
 {
-
-
-    if (track) {
-        track->track_type = TRACK_TYPE_ASS;
-        /* drop built-in "Default" */
-        track->n_styles = 0;
+    if (!track) {
+        LOG(0, "render_ass_set_style: NULL track provided\n");
+        return;
     }
+
+    track->track_type = TRACK_TYPE_ASS;
+    /* drop built-in "Default" */
+    track->n_styles = 0;
 
     char fg_ass[32], outline_ass[32], shadow_ass[32];
     hex_to_ass_color(fg, fg_ass, sizeof(fg_ass));

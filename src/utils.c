@@ -56,6 +56,8 @@
 #include <dlfcn.h>
 #include <signal.h>
 #include <limits.h>
+#include <ctype.h>
+#include <string.h>
 #include "debug.h"
 #include "dvb_lang.h"
 #include "utils.h"
@@ -471,3 +473,23 @@ int validate_path_length(const char *path, const char *label)
     }
     return 0;
 }
+
+char* trim_string_inplace(char *str)
+{
+    if (!str)
+        return str;
+
+    /* Trim leading whitespace */
+    while (*str && isspace((unsigned char)*str))
+        str++;
+
+    /* Trim trailing whitespace */
+    char *end = str + strlen(str) - 1;
+    while (end >= str && isspace((unsigned char)*end)) {
+        *end = '\0';
+        end--;
+    }
+
+    return str;
+}
+

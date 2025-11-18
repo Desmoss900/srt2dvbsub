@@ -19,7 +19,12 @@ srt2dvbsub_SOURCES = \
     src/mux_write.c \
     src/alloc_utils.c \
     src/pool_alloc.c \
-    src/utils.c
+    src/utils.c \
+    src/progress.c \
+    src/delay_parse.c \
+    src/lang_parse.c \
+    src/render_params.c \
+    src/png_path.c
 
 # Conditionally include libass-based renderer when configured with --enable-ass
 if USE_LIBASS
@@ -46,7 +51,8 @@ dvdbr2dvbsub_SOURCES = \
     src/mux_write.c \
     src/alloc_utils.c \
     src/pool_alloc.c \
-    src/utils.c
+    src/utils.c \
+    src/progress.c
 
 dvdbr2dvbsub_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)
 dvdbr2dvbsub_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) -lm
@@ -67,14 +73,12 @@ STRIP ?= strip
 
 debug:
 	@echo "Building debug binaries..."
-	$(MAKE) clean
 	$(MAKE) srt2dvbsub dvdbr2dvbsub \
 		srt2dvbsub_CFLAGS="$(DEBUG_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)" \
 		dvdbr2dvbsub_CFLAGS="$(DEBUG_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)"
 
 release:
 	@echo "Building release binaries (optimized + stripped)..."
-#	$(MAKE) clean
 	$(MAKE) srt2dvbsub dvdbr2dvbsub \
 		srt2dvbsub_CFLAGS="$(RELEASE_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)" \
 		dvdbr2dvbsub_CFLAGS="$(RELEASE_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)"
@@ -95,7 +99,7 @@ for prog in srt2dvbsub dvdbr2dvbsub; do \
 done'
 
 # Make the default 'make' build the release artifacts.
-all-local: release
+all-local: debug
 
 distclean-local:
 	rm -rf autom4te.cache

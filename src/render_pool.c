@@ -270,6 +270,40 @@ static void steal_job_result(RenderJob *j, Bitmap *out) {
     j->result.palette = NULL;
 }
 
+/* Helper: initialize all string fields of a RenderJob. Duplicates all
+ * input strings (or NULL for optional fields) and validates allocations.
+ * On success returns 0. On failure cleans up partial allocations and returns -1.
+ * Caller must NOT call cleanup_job_container on failure; this helper handles it. */
+static int init_job_strings(RenderJob *job, 
+                           const char *markup,
+                           const char *fontfam,
+                           const char *fontstyle,
+                           const char *fgcolor,
+                           const char *outlinecolor,
+                           const char *shadowcolor,
+                           const char *palette_mode)
+{
+    if (!job) return -1;
+    
+    /* Duplicate all strings; markup is mandatory (use empty string if NULL) */
+    job->markup = strdup(markup ? markup : "");
+    job->fontfam = fontfam ? strdup(fontfam) : NULL;
+    job->fontstyle = fontstyle ? strdup(fontstyle) : NULL;
+    job->fgcolor = fgcolor ? strdup(fgcolor) : NULL;
+    job->outlinecolor = outlinecolor ? strdup(outlinecolor) : NULL;
+    job->shadowcolor = shadowcolor ? strdup(shadowcolor) : NULL;
+    job->palette_mode = palette_mode ? strdup(palette_mode) : NULL;
+    
+    /* Validate allocations: markup is always required, others conditional */
+    if (!job->markup || (fontfam && !job->fontfam) || (fontstyle && !job->fontstyle) ||
+        (fgcolor && !job->fgcolor) || (outlinecolor && !job->outlinecolor) || 
+        (shadowcolor && !job->shadowcolor) || (palette_mode && !job->palette_mode)) {
+        return -1;
+    }
+    
+    return 0;
+}
+
 /*
  * worker_thread
  * -------------
@@ -342,9 +376,19 @@ static void *worker_thread(void *arg) {
  * Start `nthreads` worker threads. If nthreads <= 0 the pool remains
  * disabled and synchronous rendering is used. Returns 0 on success and
  * -1 on allocation or thread creation failure.
+ *
+ * Note: Enforces a hard upper bound on thread count to prevent system
+ * oversubscription or resource exhaustion. Maximum of 256 threads.
  */
 int render_pool_init(int nthreads) {
     if (nthreads <= 0) return 0;
+    
+    /* Guard against excessive thread counts */
+    const int MAX_POOL_THREADS = 256;
+    if (nthreads > MAX_POOL_THREADS) {
+        nthreads = MAX_POOL_THREADS;
+    }
+    
     pthread_t *new_workers = calloc(nthreads, sizeof(pthread_t));
     if (!new_workers) return -1;
     /* make pool appear running to worker threads, but only mark active
@@ -461,25 +505,22 @@ Bitmap render_pool_render_sync(const char *markup,
      * short-lived convenience. */
     RenderJob *job = calloc(1, sizeof(RenderJob));
     if (!job) return empty;
-    /* duplicate strings; if any allocation fails, clean up and return */
-    job->markup = strdup(markup ? markup : "");
-    job->disp_w = disp_w; job->disp_h = disp_h; job->fontsize = fontsize;
-    job->fontfam = fontfam ? strdup(fontfam) : NULL;
-    job->fontstyle = fontstyle ? strdup(fontstyle) : NULL;
-    job->fgcolor = fgcolor ? strdup(fgcolor) : NULL;
-    job->outlinecolor = outlinecolor ? strdup(outlinecolor) : NULL;
-    job->shadowcolor = shadowcolor ? strdup(shadowcolor) : NULL;
-    job->align_code = align_code;
-    job->palette_mode = palette_mode ? strdup(palette_mode) : NULL;
-    atomic_store(&job->done, 0);
-    job->done_cond_init = 0; job->done_mtx_init = 0;
-    if (!job->markup || (fontfam && !job->fontfam) || (fontstyle && !job->fontstyle) ||
-        (fgcolor && !job->fgcolor) ||
-        (outlinecolor && !job->outlinecolor) || (shadowcolor && !job->shadowcolor) ||
-        (palette_mode && !job->palette_mode)) {
+    
+    /* Initialize string fields; on failure clean up and return */
+    if (init_job_strings(job, markup, fontfam, fontstyle, fgcolor, 
+                        outlinecolor, shadowcolor, palette_mode) != 0) {
         cleanup_job_container(job, 1);
         return empty;
     }
+    
+    /* Initialize display and rendering parameters */
+    job->disp_w = disp_w;
+    job->disp_h = disp_h;
+    job->fontsize = fontsize;
+    job->align_code = align_code;
+    atomic_store(&job->done, 0);
+    job->done_cond_init = 0;
+    job->done_mtx_init = 0;
     if (pthread_cond_init(&job->done_cond, NULL) != 0) { cleanup_job_container(job, 1); return empty; }
     job->done_cond_init = 1;
     if (pthread_mutex_init(&job->done_mtx, NULL) != 0) { cleanup_job_container(job, 1); return empty; }
@@ -518,6 +559,10 @@ Bitmap render_pool_render_sync(const char *markup,
  * Submit a render job identified by (track_id, cue_index). The pool
  * duplicates string parameters and owns them until the job is retrieved
  * or the pool is shut down. Returns 0 on success and -1 on failure.
+ *
+ * Note: Enforces a maximum queue depth to prevent unbounded memory growth.
+ * If the queue reaches maximum size, returns -1 to force synchronous
+ * rendering fallback.
  */
 int render_pool_submit_async(int track_id, int cue_index,
                              const char *markup,
@@ -530,27 +575,38 @@ int render_pool_submit_async(int track_id, int cue_index,
 {
     /* If no pool exists, fail fast to let callers fall back if desired. */
     if (!atomic_load(&pool_active)) return -1;
+    
+    /* Guard against unbounded queue growth by enforcing max queue depth */
+    const int MAX_QUEUE_DEPTH = 1024;
+    pthread_mutex_lock(&job_mtx);
+    int queue_depth = 0;
+    for (struct RenderJob *j = job_head; j != NULL; j = j->queue_next) {
+        queue_depth++;
+        if (queue_depth >= MAX_QUEUE_DEPTH) {
+            pthread_mutex_unlock(&job_mtx);
+            return -1;  /* Queue full; caller should fall back to sync rendering */
+        }
+    }
+    pthread_mutex_unlock(&job_mtx);
+    
     RenderJob *job = calloc(1, sizeof(RenderJob));
     if (!job) return -1;
-    /* Duplicate input strings so the pool owns them. Validate all
-     * allocations and init cond/mutex; on failure clean up and return. */
-    job->markup = strdup(markup ? markup : "");
-    job->disp_w = disp_w; job->disp_h = disp_h; job->fontsize = fontsize;
-    job->fontfam = fontfam ? strdup(fontfam) : NULL;
-    job->fontstyle = fontstyle ? strdup(fontstyle) : NULL;
-    job->fgcolor = fgcolor ? strdup(fgcolor) : NULL;
-    job->outlinecolor = outlinecolor ? strdup(outlinecolor) : NULL;
-    job->shadowcolor = shadowcolor ? strdup(shadowcolor) : NULL;
-    job->align_code = align_code;
-    job->palette_mode = palette_mode ? strdup(palette_mode) : NULL;
-    atomic_store(&job->done, 0);
-    job->done_cond_init = 0; job->done_mtx_init = 0;
-    if (!job->markup || (fontfam && !job->fontfam) || (fontstyle && !job->fontstyle) ||
-        (fgcolor && !job->fgcolor) || (outlinecolor && !job->outlinecolor) || (shadowcolor && !job->shadowcolor) ||
-        (palette_mode && !job->palette_mode)) {
+    
+    /* Initialize string fields; on failure clean up and return */
+    if (init_job_strings(job, markup, fontfam, fontstyle, fgcolor,
+                        outlinecolor, shadowcolor, palette_mode) != 0) {
         cleanup_job_container(job, 1);
         return -1;
     }
+    
+    /* Initialize display and rendering parameters */
+    job->disp_w = disp_w;
+    job->disp_h = disp_h;
+    job->fontsize = fontsize;
+    job->align_code = align_code;
+    atomic_store(&job->done, 0);
+    job->done_cond_init = 0;
+    job->done_mtx_init = 0;
     if (pthread_cond_init(&job->done_cond, NULL) != 0) { cleanup_job_container(job, 1); return -1; }
     job->done_cond_init = 1;
     if (pthread_mutex_init(&job->done_mtx, NULL) != 0) { cleanup_job_container(job, 1); return -1; }

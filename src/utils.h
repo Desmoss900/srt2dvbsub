@@ -124,4 +124,27 @@ void handle_signal(int sig, volatile sig_atomic_t *stop_requested);
 
 int validate_path_length(const char *path, const char *label);
 
+/**
+ * trim_string_inplace
+ *
+ * Trim leading and trailing whitespace from a string in-place.
+ * 
+ * Modifies the input string by advancing the start pointer past leading
+ * whitespace and null-terminating at the end of trailing whitespace.
+ * The caller's pointer is updated to point to the first non-whitespace character.
+ *
+ * @param str Pointer to string to trim (may be NULL or empty)
+ * @return Pointer to first non-whitespace character, or original pointer
+ *         if already at start. Returns str unchanged if str is NULL.
+ *
+ * Example:
+ *   char buf[] = "  hello world  ";
+ *   char *p = trim_string_inplace(buf);
+ *   // p now points to 'h', buf contains "hello world\0...", rest is garbage
+ *
+ * Note: This modifies the string in-place and may be unsafe for string
+ * literals. Use on modifiable buffers only.
+ */
+char* trim_string_inplace(char *str);
+
 #endif

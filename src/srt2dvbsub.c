@@ -94,6 +94,11 @@
 #include "fontlist.h"
 #include "version.h"
 #include "debug.h"
+#include "progress.h"
+#include "delay_parse.h"
+#include "lang_parse.h"
+#include "render_params.h"
+#include "png_path.h"
 
 /*
  * srt2dvbsub.c
@@ -307,6 +312,7 @@ static int cli_parse(int argc, char **argv,
         {"ssaa", required_argument, 0, 1015},
         {"no-unsharp", no_argument, 0, 1016},
         {"font-style", required_argument, 0, 1018},
+        {"png-dir", required_argument, 0, 1020},
         {"license", no_argument, 0, 1017},
         {"help", no_argument, 0, 'h'},
         {"?", no_argument, 0, '?'},
@@ -409,7 +415,15 @@ static int cli_parse(int argc, char **argv,
             ctx->cli_font = *cli_font;
             break;
         case 1008:
-            *cli_fontsize = atoi(optarg);
+            {
+                char fontsize_err[256] = {0};
+                int ret = validate_fontsize(optarg, cli_fontsize, fontsize_err);
+                if (ret != 0) {
+                    LOG(0, "Font size validation error: %s\n", fontsize_err);
+                    LOG(0, "Valid range: %s\n", get_fontsize_usage());
+                    return 1;
+                }
+            }
             break;
         case 1018:
             if (replace_strdup(cli_font_style, optarg) != 0) {
@@ -419,6 +433,15 @@ static int cli_parse(int argc, char **argv,
             ctx->cli_font_style = *cli_font_style;
             break;
         case 1009:
+            {
+                char color_err[256] = {0};
+                int ret = validate_color(optarg, color_err);
+                if (ret != 0) {
+                    LOG(0, "Foreground color validation error: %s\n", color_err);
+                    LOG(0, "Valid format: %s\n", get_color_usage());
+                    return 1;
+                }
+            }
             if (replace_strdup(cli_fgcolor, optarg) != 0) {
                 LOG(0, "Out of memory while setting fgcolor\n");
                 return 1;
@@ -426,6 +449,15 @@ static int cli_parse(int argc, char **argv,
             ctx->cli_fgcolor = *cli_fgcolor;
             break;
         case 1010:
+            {
+                char color_err[256] = {0};
+                int ret = validate_color(optarg, color_err);
+                if (ret != 0) {
+                    LOG(0, "Outline color validation error: %s\n", color_err);
+                    LOG(0, "Valid format: %s\n", get_color_usage());
+                    return 1;
+                }
+            }
             if (replace_strdup(cli_outlinecolor, optarg) != 0) {
                 LOG(0, "Out of memory while setting outline color\n");
                 return 1;
@@ -433,6 +465,15 @@ static int cli_parse(int argc, char **argv,
             ctx->cli_outlinecolor = *cli_outlinecolor;
             break;
         case 1011:
+            {
+                char color_err[256] = {0};
+                int ret = validate_color(optarg, color_err);
+                if (ret != 0) {
+                    LOG(0, "Shadow color validation error: %s\n", color_err);
+                    LOG(0, "Valid format: %s\n", get_color_usage());
+                    return 1;
+                }
+            }
             if (replace_strdup(cli_shadowcolor, optarg) != 0) {
                 LOG(0, "Out of memory while setting shadow color\n");
                 return 1;
@@ -440,27 +481,84 @@ static int cli_parse(int argc, char **argv,
             ctx->cli_shadowcolor = *cli_shadowcolor;
             break;
         case 1012:
-            *subtitle_delay_ms = atoi(optarg);
-            char *dup_delay = strdup(optarg);
-            if (!dup_delay) {
-                LOG(0, "Out of memory while setting subtitle delay list\n");
-                return 1;
+            /* Parse and validate subtitle delay with better error messages */
+            {
+                int parsed_delay = 0;
+                char delay_err[256] = {0};
+                int ret = parse_single_delay(optarg, &parsed_delay, delay_err);
+                if (ret != 0) {
+                    LOG(0, "Subtitle delay parsing error: %s\n", delay_err);
+                    return 1;
+                }
+                *subtitle_delay_ms = parsed_delay;
+                
+                char *dup_delay = strdup(optarg);
+                if (!dup_delay) {
+                    LOG(0, "Out of memory while setting subtitle delay list\n");
+                    return 1;
+                }
+                free(*subtitle_delay_list);
+                *subtitle_delay_list = dup_delay;
+                ctx->subtitle_delay_list = *subtitle_delay_list;
+                
+                if (ctx->debug_level > 0) {
+                    LOG(1, "Subtitle delay set to %d ms\n", parsed_delay);
+                }
             }
-            free(*subtitle_delay_list);
-            *subtitle_delay_list = dup_delay;
-            ctx->subtitle_delay_list = *subtitle_delay_list;
             break;
         case 1013:
             enc_threads = atoi(optarg);
+            /* Bounds-check enc_threads similar to render_threads */
+            {
+                int max_threads = get_cpu_count();
+                if (max_threads <= 0) max_threads = 1; /* fallback */
+                int reasonable_max = (max_threads > 1) ? (max_threads * 2) : 4;
+                
+                if (enc_threads < 0) {
+                    LOG(1, "Warning: enc-threads=%d is negative; using 0 (auto CPU count)\n", enc_threads);
+                    enc_threads = 0;
+                } else if (enc_threads > reasonable_max) {
+                    LOG(1, "Warning: enc-threads=%d exceeds recommended max (%d based on %d CPUs); capping to %d\n",
+                        enc_threads, reasonable_max, max_threads, reasonable_max);
+                    enc_threads = reasonable_max;
+                }
+            }
             break;
         case 1014:
             render_threads = atoi(optarg);
+            /* Bounds-check render_threads: warn if excessive, cap at reasonable limit */
+            {
+                int max_threads = get_cpu_count();
+                if (max_threads <= 0) max_threads = 16; /* fallback if detection fails */
+                int reasonable_max = (max_threads > 1) ? (max_threads * 2) : 4;
+                
+                if (render_threads < 0) {
+                    /* atoi returns -N for negative input; reject explicitly */
+                    LOG(1, "Warning: render-threads=%d is negative; using 0 (sync-only mode)\n", render_threads);
+                    render_threads = 0;
+                } else if (render_threads > reasonable_max) {
+                    LOG(1, "Warning: render-threads=%d exceeds recommended max (%d based on %d CPUs); capping to %d\n",
+                        render_threads, reasonable_max, max_threads, reasonable_max);
+                    render_threads = reasonable_max;
+                }
+            }
             break;
         case 1015:
             ssaa_override = atoi(optarg);
             break;
         case 1016:
             no_unsharp = 1;
+            break;
+        case 1020:
+            {
+                char png_err[256] = {0};
+                int ret = init_png_path(optarg, png_err);
+                if (ret != 0) {
+                    LOG(0, "PNG directory initialization error: %s\n", png_err);
+                    return 1;
+                }
+                LOG(1, "PNG output directory: %s\n", get_png_output_dir());
+            }
             break;
         case 1017:
             print_license();
@@ -500,26 +598,14 @@ static int cli_parse(int argc, char **argv,
         return 1;
     }
 
+    /* Validate language list with detailed error reporting */
     {
-        char *tmp = strdup(*lang_list);
-        if (!tmp)
-        {
-            LOG(0, "Out of memory while validating language list\n");
+        char lang_err[512] = {0};
+        int ret = validate_language_list(*lang_list, lang_err);
+        if (ret != 0) {
+            LOG(0, "Language list validation error: %s\n", lang_err);
             return 1;
         }
-        char *save = NULL;
-        char *tok = strtok_r(tmp, ",", &save);
-        while (tok)
-        {
-            if (!is_valid_dvb_lang(tok))
-            {
-                LOG(0, "Error: invalid language code '%s' in --languages; must be 3-letter DVB language code.\n", tok);
-                free(tmp);
-                return 1;
-            }
-            tok = strtok_r(NULL, ",", &save);
-        }
-        free(tmp);
     }
 
     return -1;
@@ -658,36 +744,30 @@ static int ctx_init(struct MainCtx *ctx,
     *tok_out = strtok_r(srt_list, ",", save_srt_out);
     *tok_lang_out = strtok_r(lang_list, ",", save_lang_out);
 
-    /* Parse per-track delay list */
+    /* Parse per-track delay list with robust error handling */
     *delay_count_out = 0;
     if (subtitle_delay_list) {
         int *delay_vals = NULL;
         int delay_count = 0;
-        char *dlcopy = strdup(subtitle_delay_list);
-        if (!dlcopy)
-        {
-            LOG(1, "Out of memory duplicating subtitle delay list\n");
+        char delay_list_err[256] = {0};
+        
+        int ret = parse_delay_list(subtitle_delay_list, &delay_vals, &delay_count, delay_list_err);
+        if (ret != 0) {
+            LOG(0, "Subtitle delay list parsing error: %s\n", delay_list_err);
             free(delay_vals);
             return -1;
         }
-        char *dsave = NULL;
-        char *d = strtok_r(dlcopy, ",", &dsave);
-        while (d) {
-            int val = atoi(d);
-            int *nv = realloc(delay_vals, sizeof(*delay_vals) * (delay_count + 1));
-            if (!nv) {
-                LOG(1, "Out of memory parsing subtitle delay list\n");
-                free(delay_vals);
-                free(dlcopy);
-                return -1;
-            }
-            delay_vals = nv;
-            delay_vals[delay_count++] = val;
-            d = strtok_r(NULL, ",", &dsave);
-        }
+        
         ctx->delay_vals = delay_vals;
         *delay_count_out = delay_count;
-        free(dlcopy);
+        
+        if (debug_level > 0) {
+            LOG(1, "Parsed %d subtitle delay values: ", delay_count);
+            for (int i = 0; i < delay_count; i++) {
+                fprintf(stderr, "%s%d ms", (i > 0 ? ", " : ""), delay_vals[i]);
+            }
+            fprintf(stderr, "\n");
+        }
     }
 
     /* Try to capture mux rate from the input so we can mirror it on output. */
@@ -808,13 +888,22 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
     while (tok && tok_lang && *ntracks < 8) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+        /* Trim and validate language code token */
+        char *tok_lang_ptr = trim_string_inplace(tok_lang);
+        
+        if (tok_lang_ptr[0] == '\0' || strlen(tok_lang_ptr) != 3) {
+            LOG(0, "Invalid or empty language code at track %d: '%s'\n", *ntracks, tok_lang);
+            ctx_cleanup(ctx);
+            return -1;
+        }
+        
         tracks[*ntracks].entries = NULL;
         tracks[*ntracks].count = 0;
         tracks[*ntracks].cur_sub = 0;
 #ifdef HAVE_LIBASS
         tracks[*ntracks].ass_track = NULL;
 #endif
-        if (replace_strdup_owned(&tracks[*ntracks].lang, tok_lang) != 0) {
+        if (replace_strdup_owned(&tracks[*ntracks].lang, tok_lang_ptr) != 0) {
             LOG(0, "Out of memory allocating track language\n");
             ret = 1;
             ctx_cleanup(ctx);
@@ -863,11 +952,39 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
         }
 #ifdef HAVE_LIBASS
         else {
+            /* Initialize libass library and renderer if not already done */
             if (!ctx->ass_lib) {
+                /* Validate and apply fallback dimensions if video_w/video_h are invalid */
+                int ass_render_w = video_w > 0 ? video_w : 1920;
+                int ass_render_h = video_h > 0 ? video_h : 1080;
+                
                 ctx->ass_lib = render_ass_init();
-                ctx->ass_renderer = render_ass_renderer(ctx->ass_lib, video_w, video_h);
+                if (!ctx->ass_lib) {
+                    LOG(0, "Failed to initialize libass library for ASS rendering\n");
+                    ctx_cleanup(ctx);
+                    return -1;
+                }
+                ctx->ass_renderer = render_ass_renderer(ctx->ass_lib, ass_render_w, ass_render_h);
+                if (!ctx->ass_renderer) {
+                    LOG(0, "Failed to create ASS renderer with dimensions %dx%d\n", ass_render_w, ass_render_h);
+                    ctx_cleanup(ctx);
+                    return -1;
+                }
+                if (video_w <= 0 || video_h <= 0) {
+                    LOG(1, "Warning: video dimensions unknown, using fallback %dx%d for ASS rendering\n", 
+                        ass_render_w, ass_render_h);
+                }
             }
+            
+            /* Create new track for this subtitle stream */
             tracks[*ntracks].ass_track = render_ass_new_track(ctx->ass_lib);
+            if (!tracks[*ntracks].ass_track) {
+                LOG(0, "Failed to create ASS track for subtitle file '%s'\n", tok);
+                ctx_cleanup(ctx);
+                return -1;
+            }
+            
+            /* Apply rendering style (font, colors, etc.) */
             render_ass_set_style(tracks[*ntracks].ass_track,
                                  cli_font,
                                  cli_fontsize,
@@ -916,7 +1033,7 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
         tracks[*ntracks].stream->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
         tracks[*ntracks].stream->codecpar->codec_id = AV_CODEC_ID_DVB_SUBTITLE;
         tracks[*ntracks].stream->time_base = (AVRational){1, 90000};
-        av_dict_set(&tracks[*ntracks].stream->metadata, "language", tok_lang, 0);
+        av_dict_set(&tracks[*ntracks].stream->metadata, "language", tok_lang_ptr, 0);
         if (tracks[*ntracks].forced)
             av_dict_set(&tracks[*ntracks].stream->metadata, "forced", "1", 0);
         if (tracks[*ntracks].hi)
@@ -966,6 +1083,8 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
 #pragma GCC diagnostic pop
     return 0;
 }
+
+
 
 
 /*
@@ -1037,67 +1156,26 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
             pkt->pts = pkt->dts;
         }
 
+        /* Bounds-check stream index before dereferencing streams array; skip
+         * malformed packets that reference invalid stream indices. */
+        if (pkt->stream_index < 0 || pkt->stream_index >= (int)in_fmt->nb_streams) {
+            LOG(2, "skipping packet with invalid stream_index=%d (nb_streams=%u)\n",
+                pkt->stream_index, in_fmt->nb_streams);
+            av_packet_unref(pkt);
+            continue;
+        }
+
         int64_t cur90 = (pkt->pts == AV_NOPTS_VALUE) ? AV_NOPTS_VALUE : av_rescale_q(pkt->pts, in_fmt->streams[pkt->stream_index]->time_base, (AVRational){1, 90000});
         if (cur90 != AV_NOPTS_VALUE)
             last_valid_cur90 = cur90;
         int64_t cmp90 = (cur90 != AV_NOPTS_VALUE) ? cur90 : last_valid_cur90;
 
-        if (debug_level == 0 && (pkt_count & pkt_progress_mask) == 0)
+        if ((pkt_count & pkt_progress_mask) == 0)
         {
             time_t now = time(NULL);
-            if (now - last_progress_time >= 1)
-            {
-                double elapsed = difftime(now, prog_start_time);
-                double pct = 0.0;
-                double eta = 0.0;
-                int64_t cur_for_pct = (cur90 != AV_NOPTS_VALUE) ? cur90 : last_valid_cur90;
-                if (total_duration_pts90 != AV_NOPTS_VALUE && total_duration_pts90 > 0 && cur_for_pct != AV_NOPTS_VALUE)
-                {
-                    pct = (double)(cur_for_pct - input_start_pts90) / (double)total_duration_pts90;
-                    if (pct < 0.0)
-                        pct = 0.0;
-                    if (pct > 1.0)
-                        pct = 1.0;
-                    if (pct > 0.001)
-                    {
-                        double total_est = elapsed / pct;
-                        eta = total_est - elapsed;
-                    }
-                }
-
-                int mins = (int)(elapsed / 60.0);
-                int secs = (int)(elapsed) % 60;
-                int eta_m = (int)(eta / 60.0);
-                int eta_s = (int)(eta) % 60;
-
-                if (total_duration_pts90 != AV_NOPTS_VALUE)
-                {
-                    char line[81];
-                    int n = snprintf(line, sizeof(line), "Progress: %5.1f%% subs=%ld elapsed=%02d:%02d ETA=%02d:%02d", pct * 100.0, subs_emitted, mins, secs, eta_m, eta_s);
-                    if (n < 0)
-                        n = 0;
-                    if (n >= (int)sizeof(line))
-                        n = (int)sizeof(line) - 1;
-                    memset(line + n, ' ', sizeof(line) - n - 1);
-                    line[sizeof(line) - 1] = '\0';
-                    fprintf(stdout, "\r%s\r", line);
-                }
-                else
-                {
-                    char line[81];
-                    int n = snprintf(line, sizeof(line), "Progress: pkt=%ld subs=%ld elapsed=%02d:%02d", pkt_count, subs_emitted, mins, secs);
-                    if (n < 0)
-                        n = 0;
-                    if (n >= (int)sizeof(line))
-                        n = (int)sizeof(line) - 1;
-                    memset(line + n, ' ', sizeof(line) - n - 1);
-                    line[sizeof(line) - 1] = '\0';
-                    fprintf(stdout, "\r%s\r", line);
-                }
-
-                fflush(stdout);
-                last_progress_time = now;
-            }
+            emit_progress(debug_level, now, prog_start_time, &last_progress_time,
+                         pkt_count, subs_emitted, total_duration_pts90,
+                         input_start_pts90, last_valid_cur90, 1 /* use_pkt_count */);
         }
 
         for (int t = 0; t < ntracks; t++)
@@ -1245,9 +1323,10 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                 char pngfn[PATH_MAX] = "";
                 if (debug_level > 1)
                 {
-                    snprintf(pngfn, sizeof(pngfn), "pngs/srt_%03d_t%02d_c%03d.png", __srt_png_seq++, t, tracks[t].cur_sub);
-                    save_bitmap_png(&bm, pngfn);
-                    LOG(2, "[png] SRT bitmap saved: %s (x=%d y=%d w=%d h=%d)\n", pngfn, bm.x, bm.y, bm.w, bm.h);
+                    if (make_png_filename(pngfn, sizeof(pngfn), __srt_png_seq++, t, tracks[t].cur_sub) == 0) {
+                        save_bitmap_png(&bm, pngfn);
+                        LOG(2, "[png] SRT bitmap saved: %s (x=%d y=%d w=%d h=%d)\n", pngfn, bm.x, bm.y, bm.w, bm.h);
+                    }
                     if (tracks[t].cur_sub < tracks[t].count && tracks[t].entries[tracks[t].cur_sub].text) {
                         LOG(2, "[png] cue idx=%d text='%s'\n", tracks[t].cur_sub, tracks[t].entries[tracks[t].cur_sub].text);
                     }
@@ -1294,55 +1373,12 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                track_delay_ms);
                     }
 
-                    if (debug_level == 0)
-                    {
-                        time_t now = time(NULL);
-                        if (now - last_progress_time >= 1)
-                        {
-                            double elapsed = difftime(now, prog_start_time);
-                            int mins = (int)(elapsed / 60.0);
-                            int secs = (int)(elapsed) % 60;
-                            char line2[81];
-                            if (total_duration_pts90 != AV_NOPTS_VALUE && total_duration_pts90 > 0 && last_valid_cur90 != AV_NOPTS_VALUE)
-                            {
-                                double pct = (double)(last_valid_cur90 - input_start_pts90) / (double)total_duration_pts90;
-                                if (pct < 0.0)
-                                    pct = 0.0;
-                                if (pct > 1.0)
-                                    pct = 1.0;
-                                int eta_m = 0, eta_s = 0;
-                                if (pct > 0.001)
-                                {
-                                    double total_est = elapsed / pct;
-                                    double eta = total_est - elapsed;
-                                    eta_m = (int)(eta / 60.0);
-                                    eta_s = (int)(eta) % 60;
-                                }
-                                int n2 = snprintf(line2, sizeof(line2), "Progress: %5.1f%% subs=%ld elapsed=%02d:%02d ETA=%02d:%02d", pct * 100.0, subs_emitted, mins, secs, eta_m, eta_s);
-                                if (n2 < 0)
-                                    n2 = 0;
-                                if (n2 >= (int)sizeof(line2))
-                                    n2 = (int)sizeof(line2) - 1;
-                            }
-                            else
-                            {
-                                int n2 = snprintf(line2, sizeof(line2), "Progress: subs=%ld elapsed=%02d:%02d", subs_emitted, mins, secs);
-                                if (n2 < 0)
-                                    n2 = 0;
-                                if (n2 >= (int)sizeof(line2))
-                                    n2 = (int)sizeof(line2) - 1;
-                            }
-                            int len = (int)strlen(line2);
-                            if (len < (int)sizeof(line2) - 1)
-                                memset(line2 + len, ' ', sizeof(line2) - len - 1);
-                            line2[sizeof(line2) - 1] = '\0';
+                    /* Emit progress after each subtitle emission using common helper */
+                    time_t now = time(NULL);
+                    emit_progress(debug_level, now, prog_start_time, &last_progress_time,
+                                 pkt_count, subs_emitted, total_duration_pts90,
+                                 input_start_pts90, last_valid_cur90, 0 /* no pkt_count */);
 
-                            fprintf(stdout, "\r%s\r", line2);
-
-                            fflush(stdout);
-                            last_progress_time = now;
-                        }
-                    }
 
                     avsubtitle_free(sub);
                     av_free(sub);
@@ -1392,6 +1428,11 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
         if (pkt->stream_index >= 0 && pkt->stream_index < (int)in_fmt->nb_streams)
         {
             AVStream *out_st = out_fmt->streams[pkt->stream_index];
+            if (!out_st) {
+                LOG(2, "output stream %d is NULL, skipping packet\n", pkt->stream_index);
+                av_packet_unref(pkt);
+                continue;
+            }
             pkt->stream_index = out_st->index;
 
             int64_t t5 = bench_now();
@@ -1405,6 +1446,22 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
             }
         }
         av_packet_unref(pkt);
+    }
+
+    /* Force final progress update at 100% completion before exiting demux loop */
+    if (debug_level == 0)
+    {
+        time_t now = time(NULL);
+        /* Temporarily clear last_progress_time to force output regardless of throttle */
+        time_t saved_time = last_progress_time;
+        last_progress_time = now - 2; /* Ensure now - last_progress_time >= 1 */
+        emit_progress(debug_level, now, prog_start_time, &last_progress_time,
+                     pkt_count, subs_emitted, total_duration_pts90,
+                     input_start_pts90, 
+                     (total_duration_pts90 != AV_NOPTS_VALUE) ? (input_start_pts90 + total_duration_pts90) : last_valid_cur90,
+                     0 /* no pkt_count */);
+        fprintf(stdout, "\n"); /* Newline to separate progress from subsequent output */
+        (void)saved_time; /* Mark as used to avoid compiler warnings */
     }
 
     return 0;
@@ -2050,8 +2107,18 @@ int main(int argc, char **argv)
      *  - sync fallback: if an async job was submitted but not ready we can
      *    render synchronously to avoid missing emission deadlines.
      *
-     * We register render_pool_shutdown with atexit() as a defensive cleanup
-     * so render worker threads will be stopped even on early exit paths.
+     * Defensive atexit() registration:
+     * - render_pool_shutdown() is registered with atexit() ONLY on successful
+     *   initialization (render_pool_init returns 0).
+     * - On normal exit (success or error via finalize_main), ctx_cleanup()
+     *   explicitly calls render_pool_shutdown(), so the atexit handler is
+     *   usually redundant.
+     * - The atexit registration serves as a safety net for abnormal exits
+     *   (signal, early return, uncaught exception, etc.) where ctx_cleanup()
+     *   may not run. Since render_pool_shutdown() is idempotent (safe to call
+     *   multiple times), duplicate calls are harmless.
+     * - On initialization failure, render_pool_shutdown() is NOT registered,
+     *   and render_threads is set to 0 (sync-only mode).
      */
     if (render_threads > 0)
     {
@@ -2088,9 +2155,13 @@ int main(int argc, char **argv)
      */
     if (debug_level > 0)
     {
-        if (mkdir("pngs", 0755) < 0 && errno != EEXIST)
-        {
-            LOG(1, "Warning: could not create pngs/ directory: %s\n", strerror(errno));
+        char png_err[256] = {0};
+        /* Initialize PNG output directory (defaults to "pngs/" if not set via --png-dir) */
+        int ret = init_png_path(NULL, png_err);
+        if (ret != 0) {
+            LOG(1, "Warning: PNG directory initialization: %s\n", png_err);
+        } else {
+            LOG(1, "PNG output directory: %s\n", get_png_output_dir());
         }
     }
 
