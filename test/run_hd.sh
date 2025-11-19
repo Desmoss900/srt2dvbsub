@@ -6,4 +6,3 @@ srt2dvbsub \
 	--srt ../test/Alita.Battle.Angel.2019.en.25.srt,../test/Alita.Battle.Angel.2019.de.25.srt \
 	--languages eng,deu \
 	--ssaa 8 
-
