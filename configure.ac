@@ -1,4 +1,4 @@
-AC_INIT([srt2dvbsub], [1.0], [bugs@chili-iptv.info])
+AC_INIT([srt2dvbsub], [0.0.1], [bugs@chili-iptv.info])
 
 # Default to disabling Automake dependency-tracking unless explicitly enabled.
 # This makes the common developer/workflow faster (no per-file dep-tracking)
@@ -171,7 +171,7 @@ elif test -d ../.git; then
   GIT_COMMIT=`git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
   AC_MSG_RESULT([$GIT_COMMIT (detected from git)])
 else
-  GIT_COMMIT="release"
+  GIT_COMMIT="beta"
   AC_MSG_RESULT([$GIT_COMMIT (fallback)])
 fi
 
