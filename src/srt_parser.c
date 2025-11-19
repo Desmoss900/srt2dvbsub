@@ -448,6 +448,253 @@ static void sp_log(int level, const char *fmt, ...) {
 }
 
 /*
+ * Validate and sanitize UTF-8 sequence. Returns 1 if valid, 0 if invalid.
+ * If invalid and sanitize is true, replaces invalid bytes with replacement char.
+ */
+static int validate_utf8_sequence(unsigned char *s, size_t len, int sanitize) {
+    if (!s || len == 0) return 1;
+    
+    if ((s[0] & 0x80) == 0) {
+        /* ASCII, always valid */
+        return 1;
+    } else if ((s[0] & 0xE0) == 0xC0) {
+        /* 2-byte sequence */
+        if (len < 2 || (s[1] & 0xC0) != 0x80) {
+            if (sanitize && len > 0) s[0] = '?';
+            return 0;
+        }
+        return 1;
+    } else if ((s[0] & 0xF0) == 0xE0) {
+        /* 3-byte sequence */
+        if (len < 3 || (s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80) {
+            if (sanitize && len > 0) s[0] = '?';
+            return 0;
+        }
+        return 1;
+    } else if ((s[0] & 0xF8) == 0xF0) {
+        /* 4-byte sequence */
+        if (len < 4 || (s[1] & 0xC0) != 0x80 || (s[2] & 0xC0) != 0x80 || (s[3] & 0xC0) != 0x80) {
+            if (sanitize && len > 0) s[0] = '?';
+            return 0;
+        }
+        return 1;
+    } else {
+        /* Invalid lead byte */
+        if (sanitize && len > 0) s[0] = '?';
+        return 0;
+    }
+}
+
+/*
+ * Sanitize a UTF-8 string by replacing invalid sequences with replacement char.
+ * Returns newly allocated corrected string or original if valid.
+ */
+static char* sanitize_utf8(const char *in, SRTParserStats *stats) {
+    if (!in) return NULL;
+    
+    size_t in_len = strlen(in);
+    unsigned char *work = (unsigned char *)malloc(in_len + 1);
+    if (!work) return NULL;
+    
+    memcpy(work, in, in_len + 1);
+    int errors_found = 0;
+    
+    for (size_t i = 0; i < in_len; ) {
+        size_t remaining = in_len - i;
+        if (!validate_utf8_sequence(work + i, remaining, 1)) {
+            errors_found++;
+            if (stats) stats->encoding_errors_fixed++;
+        }
+        
+        /* Skip this codepoint */
+        unsigned char c = work[i];
+        if ((c & 0x80) == 0) {
+            i += 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            i += 4;
+        } else {
+            i += 1;
+        }
+    }
+    
+    if (errors_found > 0) {
+        if (stats) stats->encoding_warnings++;
+        if (debug_level > 1) {
+            sp_log(2, "Sanitized %d UTF-8 encoding errors in string\n", errors_found);
+        }
+    }
+    
+    char *result = (char *)work;
+    return result;
+}
+
+/*
+ * Parse a timestamp line with fallback support for common format errors.
+ * Handles: HH:MM:SS,mmm --> HH:MM:SS,mmm (standard)
+ *          MM:SS,mmm --> MM:SS,mmm (no hours)
+ *          HH:MM:SS.mmm --> HH:MM:SS.mmm (dot instead of comma)
+ *          HH:MM:SS,mmm => HH:MM:SS,mmm (arrow variation)
+ *
+ * Returns 1 if successfully parsed, 0 if malformed and unrecoverable.
+ */
+static int parse_srt_timestamp(const char *line, int *h1, int *m1, int *s1, int *ms1,
+                                int *h2, int *m2, int *s2, int *ms2, 
+                                SRTParserStats *stats) {
+    if (!line || !h1 || !m1 || !s1 || !ms1 || !h2 || !m2 || !s2 || !ms2) return 0;
+    
+    /* Try standard format first: HH:MM:SS,mmm --> HH:MM:SS,mmm */
+    if (sscanf(line, "%d:%d:%d,%d --> %d:%d:%d,%d",
+               h1, m1, s1, ms1, h2, m2, s2, ms2) == 8) {
+        return 1;
+    }
+    
+    /* Try with dot instead of comma: HH:MM:SS.mmm --> HH:MM:SS.mmm */
+    if (sscanf(line, "%d:%d:%d.%d --> %d:%d:%d.%d",
+               h1, m1, s1, ms1, h2, m2, s2, ms2) == 8) {
+        if (stats) stats->encoding_warnings++;
+        if (debug_level > 0) {
+            sp_log(1, "Timestamp format correction: dot changed to comma\n");
+        }
+        return 1;
+    }
+    
+    /* Try without hours (MM:SS,mmm --> MM:SS,mmm) */
+    if (sscanf(line, "%d:%d,%d --> %d:%d,%d", m1, s1, ms1, m2, s2, ms2) == 6) {
+        *h1 = 0; *h2 = 0;
+        if (stats) stats->validation_warnings++;
+        if (debug_level > 0) {
+            sp_log(1, "Timestamp format correction: missing hours (assumed 0)\n");
+        }
+        return 1;
+    }
+    
+    /* Try without hours with dot: MM:SS.mmm --> MM:SS.mmm */
+    if (sscanf(line, "%d:%d.%d --> %d:%d.%d", m1, s1, ms1, m2, s2, ms2) == 6) {
+        *h1 = 0; *h2 = 0;
+        if (stats) stats->encoding_warnings++;
+        if (debug_level > 0) {
+            sp_log(1, "Timestamp format correction: missing hours and dot format\n");
+        }
+        return 1;
+    }
+    
+    /* Try arrow variations: => or -> instead of --> */
+    char *arrow_variants[] = {"=>", "->"};
+    for (int i = 0; i < 2; i++) {
+        char fmt[128];
+        snprintf(fmt, sizeof(fmt), "%%d:%%d:%%d,%%d %s %%d:%%d:%%d,%%d", arrow_variants[i]);
+        if (sscanf(line, fmt, h1, m1, s1, ms1, h2, m2, s2, ms2) == 8) {
+            if (stats) stats->validation_warnings++;
+            if (debug_level > 0) {
+                sp_log(1, "Timestamp format correction: arrow changed from '%s' to '-->'\n", arrow_variants[i]);
+            }
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+/*
+ * Validate cue text size (line count and visible length).
+ * Returns 1 if within limits, 0 if oversized.
+ * Logs warnings when limits are approached or exceeded.
+ */
+static int validate_cue_size(const char *text, int max_line_length, int max_line_count,
+                             SRTParserStats *stats) {
+    if (!text) return 1;
+    
+    /* Count lines and track longest line */
+    int line_count = 0;
+    int max_line_len = 0;
+    const char *p = text;
+    const char *line_start = p;
+    
+    while (*p) {
+        if (*p == '\n') {
+            int line_len = visible_len(line_start);
+            if (line_len > max_line_len) max_line_len = line_len;
+            line_count++;
+            line_start = p + 1;
+        }
+        p++;
+    }
+    
+    /* Check final line */
+    if (p > line_start) {
+        int line_len = visible_len(line_start);
+        if (line_len > max_line_len) max_line_len = line_len;
+        line_count++;
+    }
+    
+    int size_ok = 1;
+    
+    /* Check line count */
+    if (max_line_count > 0 && line_count > max_line_count) {
+        if (stats) stats->validation_warnings++;
+        if (debug_level > 0) {
+            sp_log(1, "Cue exceeds max line count: %d > %d\n", line_count, max_line_count);
+        }
+        size_ok = 0;
+    }
+    
+    /* Check line length */
+    if (max_line_length > 0 && max_line_len > max_line_length) {
+        if (stats) stats->validation_warnings++;
+        if (debug_level > 0) {
+            sp_log(1, "Cue line exceeds max length: %d > %d\n", max_line_len, max_line_length);
+        }
+        size_ok = 0;
+    }
+    
+    return size_ok;
+}
+
+/*
+ * Track seen cue IDs and detect duplicates/non-sequential patterns.
+ * Returns auto-generated sequential ID if duplicate or invalid.
+ */
+static int process_cue_id(int cue_id, int *last_id, 
+                          SRTParserStats *stats, int auto_fix) {
+    if (!stats) return cue_id;
+    
+    /* Check for duplicate ID */
+    if (cue_id == *last_id) {
+        if (stats) stats->duplicate_ids_fixed++;
+        if (auto_fix) {
+            int new_id = *last_id + 1;
+            if (debug_level > 0) {
+                sp_log(1, "Duplicate cue ID %d detected, renumbered to %d\n", cue_id, new_id);
+            }
+            *last_id = new_id;
+            return new_id;
+        }
+        return cue_id;
+    }
+    
+    /* Check for non-sequential ID */
+    if (cue_id > *last_id + 1) {
+        int gap = cue_id - *last_id - 1;
+        if (stats) stats->sequences_fixed++;
+        if (auto_fix) {
+            int new_id = *last_id + 1;
+            if (debug_level > 0) {
+                sp_log(1, "Non-sequential cue IDs detected (gap of %d), using %d instead of %d\n", gap, new_id, cue_id);
+            }
+            *last_id = new_id;
+            return new_id;
+        }
+    }
+    
+    *last_id = cue_id;
+    return cue_id;
+}
+
+/*
  * Replace ASS non-breaking space escape ("\h") with a normal space. 
  */
 static void replace_ass_h(char *text) {
@@ -832,6 +1079,308 @@ int parse_srt_cfg(const char *filename, SRTEntry **entries_out, FILE *qc, const 
     return parse_srt(filename, entries_out, qc);
 }
 
+/*
+ * Enhanced parsing function that collects robustness statistics.
+ * Returns number of successfully parsed cues, -1 on error.
+ * stats_out is optionally filled with parse statistics if provided.
+ */
+int parse_srt_with_stats(const char *filename, SRTEntry **entries_out, FILE *qc,
+                         const SRTParserConfig *cfg, SRTParserStats *stats_out) {
+    extern int debug_level;
+    
+    /* Initialize stats if provided */
+    if (stats_out) {
+        memset(stats_out, 0, sizeof(SRTParserStats));
+        stats_out->min_duration = INT64_MAX;
+        stats_out->min_gap = INT64_MAX;
+    }
+    
+    /* Use provided config or construct from globals */
+    SRTParserConfig default_cfg = {0};
+    if (!cfg) {
+        default_cfg.use_ass = use_ass;
+        default_cfg.video_w = video_w;
+        default_cfg.video_h = video_h;
+        default_cfg.validation_level = SRT_VALIDATE_LENIENT;
+        default_cfg.max_line_length = 200;
+        default_cfg.max_line_count = 5;
+        default_cfg.auto_fix_duplicates = 1;
+        default_cfg.auto_fix_encoding = 1;
+        default_cfg.warn_on_short_duration = 1;
+        default_cfg.warn_on_long_duration = 1;
+        cfg = &default_cfg;
+    }
+    
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        if (debug_level > 0) {
+            sp_log(1, "Failed to open SRT '%s': %s\n", filename, strerror(errno));
+        }
+        return -1;
+    }
+
+    char line[2048];
+    size_t cap = 128;
+    size_t n = 0;
+    int last_cue_id = 0;
+    
+    *entries_out = calloc(cap, sizeof(SRTEntry));
+    if (!*entries_out) {
+        if (debug_level > 0) {
+            sp_log(1, "Failed to allocate entries array for '%s'\n", filename);
+        }
+        fclose(f);
+        return -1;
+    }
+
+    int is_hd = (cfg->video_w > 720 || cfg->video_h > 576);
+    
+    while (fgets(line, sizeof(line), f)) {
+        rstrip(line);
+        if (strlen(line) == 0) continue;
+
+        /* Strip UTF-8 BOM */
+        if ((unsigned char)line[0] == 0xEF &&
+            (unsigned char)line[1] == 0xBB &&
+            (unsigned char)line[2] == 0xBF) {
+            memmove(line, line + 3, strlen(line + 3) + 1);
+        }
+
+        int idx = 0;
+        if (sscanf(line, "%d", &idx) == 1) {
+            if (cfg->auto_fix_duplicates) {
+                idx = process_cue_id(idx, &last_cue_id, stats_out, 1);
+            }
+            if (!fgets(line, sizeof(line), f)) break;
+            rstrip(line);
+        }
+
+        if (stats_out) stats_out->total_cues++;
+        
+        int h1,m1,s1,ms1,h2,m2,s2,ms2;
+        if (!parse_srt_timestamp(line, &h1, &m1, &s1, &ms1, &h2, &m2, &s2, &ms2, stats_out)) {
+            if (stats_out) stats_out->skipped_cues++;
+            if (debug_level > 1) {
+                sp_log(2, "Malformed timestamp line (skipped): '%s'\n", line);
+            }
+            continue;
+        }
+        
+        /* Validate timestamp ranges */
+        if (m1 < 0 || m1 > 59 || s1 < 0 || s1 > 59 || ms1 < 0 || ms1 > 999 ||
+            m2 < 0 || m2 > 59 || s2 < 0 || s2 > 59 || ms2 < 0 || ms2 > 999) {
+            if (stats_out) {
+                stats_out->skipped_cues++;
+                stats_out->validation_warnings++;
+            }
+            if (debug_level > 0) {
+                sp_log(1, "Invalid timestamp ranges (skipped): '%s'\n", line);
+            }
+            continue;
+        }
+        
+        int64_t start = ((int64_t)h1*3600 + m1*60 + s1) * 1000 + ms1;
+        int64_t end   = ((int64_t)h2*3600 + m2*60 + s2) * 1000 + ms2;
+        
+        if (end <= start) {
+            if (stats_out) {
+                stats_out->skipped_cues++;
+                stats_out->validation_warnings++;
+            }
+            if (debug_level > 0) {
+                sp_log(1, "Invalid cue timing end <= start (skipped): '%s'\n", line);
+            }
+            continue;
+        }
+
+        char textbuf[8192] = {0};
+        while (fgets(line, sizeof(line), f)) {
+            rstrip(line);
+            if (strlen(line) == 0) break;
+            if (strlen(textbuf)+strlen(line)+2 < sizeof(textbuf)) {
+                strcat(textbuf, line);
+                strcat(textbuf, "\n");
+            }
+        }
+        
+        /* Check for empty text */
+        if (strlen(textbuf) == 0) {
+            if (stats_out) {
+                stats_out->skipped_cues++;
+                stats_out->validation_warnings++;
+            }
+            if (debug_level > 1) {
+                sp_log(2, "Empty cue text (skipped) at %lld ms\n", (long long)start);
+            }
+            continue;
+        }
+
+        if (n >= cap) {
+            cap *= 2;
+            SRTEntry *tmp = realloc(*entries_out, cap * sizeof(SRTEntry));
+            if (!tmp) {
+                if (debug_level > 0) {
+                    sp_log(1, "realloc failed\n");
+                }
+                free(*entries_out);
+                *entries_out = NULL;
+                fclose(f);
+                return -1;
+            }
+            *entries_out = tmp;
+        }
+
+        /* Sanitize UTF-8 if configured */
+        char *textbuf_sanitized = textbuf;
+        if (cfg->auto_fix_encoding) {
+            char *sanitized = sanitize_utf8(textbuf, stats_out);
+            if (sanitized) {
+                textbuf_sanitized = sanitized;
+            }
+        }
+
+        char *norm = NULL;
+        if (cfg->use_ass) {
+            norm = normalize_tags(textbuf_sanitized);
+            if (!norm) {
+                norm = strdup(textbuf_sanitized);
+                if (!norm) {
+                    if (stats_out) stats_out->skipped_cues++;
+                    free(textbuf_sanitized);
+                    continue;
+                }
+            }
+            replace_ass_h(norm);
+        } else {
+            norm = normalize_cue_text(textbuf_sanitized, is_hd);
+            if (!norm) {
+                if (stats_out) stats_out->skipped_cues++;
+                free(textbuf_sanitized);
+                continue;
+            }
+            remove_ass_h(norm);
+            rstrip(norm);
+        }
+
+        if (textbuf_sanitized != textbuf) {
+            free(textbuf_sanitized);
+        }
+
+        /* Validate cue text size */
+        if (cfg->max_line_length > 0 || cfg->max_line_count > 0) {
+            if (!validate_cue_size(norm, cfg->max_line_length, cfg->max_line_count, stats_out)) {
+                /* Size validation warning logged; continue anyway */
+                if (debug_level > 1) {
+                    sp_log(2, "Cue size validation warning: text may not render correctly\n");
+                }
+            }
+        }
+
+        (*entries_out)[n].start_ms = start;
+        (*entries_out)[n].end_ms   = end;
+        (*entries_out)[n].text     = norm;
+
+        /* Force 50ms gap between cues */
+        if (n > 0 && (*entries_out)[n].start_ms <= (*entries_out)[n-1].end_ms) {
+            (*entries_out)[n-1].end_ms = (*entries_out)[n].start_ms - 50;
+            if ((*entries_out)[n-1].end_ms < (*entries_out)[n-1].start_ms) {
+                (*entries_out)[n-1].end_ms = (*entries_out)[n-1].start_ms + 1;
+            }
+            (*entries_out)[n].start_ms = (*entries_out)[n-1].end_ms + 50;
+            if (stats_out) stats_out->overlaps_corrected++;
+            if (debug_level > 0) {
+                sp_log(1,
+                    "Overlap corrected: cue %d end=%lld, cue %d start=%lld\n",
+                    (int)(n-1), (long long)(*entries_out)[n-1].end_ms,
+                    (int)n, (long long)(*entries_out)[n].start_ms);
+            }
+        }
+
+        /* Calculate duration and gap statistics */
+        int64_t duration = (*entries_out)[n].end_ms - (*entries_out)[n].start_ms;
+        if (stats_out) {
+            stats_out->valid_cues++;
+            if (duration < stats_out->min_duration) stats_out->min_duration = duration;
+            if (duration > stats_out->max_duration) stats_out->max_duration = duration;
+            
+            if (n > 0) {
+                int64_t gap = (*entries_out)[n].start_ms - (*entries_out)[n-1].end_ms;
+                if (gap < stats_out->min_gap) stats_out->min_gap = gap;
+                if (gap > stats_out->max_gap) stats_out->max_gap = gap;
+            }
+        }
+
+        /* Check duration warnings */
+        if (cfg->warn_on_short_duration && duration < 100) {
+            if (stats_out) stats_out->timing_warnings++;
+            if (debug_level > 0) {
+                sp_log(1, "Cue %d has very short duration (%lld ms)\n", (int)n, (long long)duration);
+            }
+        }
+        if (cfg->warn_on_long_duration && duration > 30000) {
+            if (stats_out) stats_out->timing_warnings++;
+            if (debug_level > 0) {
+                sp_log(1, "Cue %d has very long duration (%lld ms)\n", (int)n, (long long)duration);
+            }
+        }
+
+        int align = 2;
+        const char *tag = strstr(textbuf, "{\\an");
+        if (tag && strlen(tag) >= 5) {
+            int code = tag[4]-'0';
+            if (code >= 1 && code <= 9) align = code;
+        }
+        (*entries_out)[n].alignment = align;
+
+        char *plain = strip_tags((*entries_out)[n].text);
+        if (!plain) {
+            if (stats_out) stats_out->skipped_cues++;
+            continue;
+        }
+        
+        SRTEntry tmp = (*entries_out)[n];
+        tmp.text = plain;
+
+        qc_check_entry(filename, (int)n, &tmp,
+                       (n > 0 ? &(*entries_out)[n-1] : NULL), qc);
+
+        if (debug_level > 1) {
+            sp_log(2, "Cue %d: %lld → %lld ms (%lld ms) | text='%s'\n",
+                (int)n,
+                (long long)(*entries_out)[n].start_ms,
+                (long long)(*entries_out)[n].end_ms,
+                (long long)duration,
+                plain);
+        }
+
+        free(plain);
+        n++;
+    }
+    
+    fclose(f);
+    
+    /* Finalize statistics */
+    if (stats_out) {
+        if (stats_out->valid_cues > 0) {
+            /* Calculate average duration */
+            int64_t total_duration = 0;
+            for (size_t i = 0; i < n; i++) {
+                total_duration += (*entries_out)[i].end_ms - (*entries_out)[i].start_ms;
+            }
+            stats_out->avg_duration = total_duration / stats_out->valid_cues;
+        }
+        
+        if (debug_level > 0) {
+            sp_log(1, "Parse complete: %d valid, %d skipped, %d corrections applied\n",
+                stats_out->valid_cues, stats_out->skipped_cues,
+                stats_out->duplicate_ids_fixed + stats_out->overlaps_corrected + 
+                stats_out->encoding_errors_fixed + stats_out->sequences_fixed);
+        }
+    }
+    
+    return (int)n;
+}
+
 /* 
  * Convert minimal HTML tags (<i>, <b>, <font color>) into ASS overrides.
  * The caller frees the returned string. 
@@ -931,3 +1480,127 @@ char* strip_tags(const char *in) {
     out[j] = '\0';
     return out;
 }
+
+/*
+ * Report parser statistics in human-readable format.
+ * If stats is NULL or all stats are zero, prints nothing.
+ */
+void srt_report_stats(const SRTParserStats *stats, FILE *out) {
+    if (!stats || !out) return;
+    
+    if (stats->total_cues == 0) return;
+    
+    fprintf(out, "\n=== SRT Parser Statistics ===\n");
+    fprintf(out, "Total cues encountered:        %d\n", stats->total_cues);
+    fprintf(out, "Valid cues stored:            %d\n", stats->valid_cues);
+    fprintf(out, "Skipped/malformed cues:       %d\n", stats->skipped_cues);
+    fprintf(out, "\n=== Corrections Applied ===\n");
+    fprintf(out, "Duplicate IDs fixed:          %d\n", stats->duplicate_ids_fixed);
+    fprintf(out, "Non-sequential sequences:     %d\n", stats->sequences_fixed);
+    fprintf(out, "Overlaps corrected:           %d\n", stats->overlaps_corrected);
+    fprintf(out, "Encoding errors fixed:        %d\n", stats->encoding_errors_fixed);
+    fprintf(out, "\n=== Warnings Issued ===\n");
+    fprintf(out, "Encoding warnings:            %d\n", stats->encoding_warnings);
+    fprintf(out, "Timing warnings:              %d\n", stats->timing_warnings);
+    fprintf(out, "Validation warnings:          %d\n", stats->validation_warnings);
+    
+    if (stats->valid_cues > 0) {
+        fprintf(out, "\n=== Duration Statistics ===\n");
+        fprintf(out, "Min duration:                 %lld ms\n", (long long)stats->min_duration);
+        fprintf(out, "Max duration:                 %lld ms\n", (long long)stats->max_duration);
+        fprintf(out, "Avg duration:                 %lld ms\n", (long long)stats->avg_duration);
+        fprintf(out, "\n=== Gap Statistics ===\n");
+        fprintf(out, "Min gap between cues:         %lld ms\n", (long long)stats->min_gap);
+        fprintf(out, "Max gap between cues:         %lld ms\n", (long long)stats->max_gap);
+    }
+    
+    fprintf(out, "\n");
+}
+
+/*
+ * Analyze gaps between consecutive cues and report timing anomalies.
+ * Useful for detecting missing cues, misaligned timing, or unusual patterns.
+ * Flags large gaps (>5s) and reports all gap ranges.
+ */
+void srt_analyze_gaps(const SRTEntry *entries, int n_cues, FILE *out) {
+    if (!entries || n_cues < 2 || !out) return;
+    
+    fprintf(out, "\n=== Gap Analysis ===\n");
+    fprintf(out, "Analyzing %d cues for timing gaps and anomalies...\n\n", n_cues);
+    
+    int large_gaps = 0;
+    int small_gaps = 0;
+    int64_t total_gap = 0;
+    int64_t min_gap = INT64_MAX;
+    int64_t max_gap = 0;
+    
+    for (int i = 1; i < n_cues; i++) {
+        int64_t gap = entries[i].start_ms - entries[i-1].end_ms;
+        total_gap += gap;
+        
+        if (gap < min_gap) min_gap = gap;
+        if (gap > max_gap) max_gap = gap;
+        
+        /* Flag unusually large gaps (potential missing cues) */
+        if (gap > 5000) {
+            large_gaps++;
+            fprintf(out, "⚠ Large gap: %.2fs between cue %d (ends at %.2fs) and cue %d (starts at %.2fs)\n",
+                gap / 1000.0, i-1, entries[i-1].end_ms / 1000.0, i, entries[i].start_ms / 1000.0);
+        }
+        
+        /* Flag very small gaps (potential tight timing) */
+        if (gap > 0 && gap < 100) {
+            small_gaps++;
+        }
+    }
+    
+    int avg_gap = (n_cues > 1) ? (int)(total_gap / (n_cues - 1)) : 0;
+    
+    fprintf(out, "\nGap Statistics:\n");
+    fprintf(out, "  Min gap:                  %lld ms\n", (long long)min_gap);
+    fprintf(out, "  Max gap:                  %lld ms\n", (long long)max_gap);
+    fprintf(out, "  Avg gap:                  %d ms\n", avg_gap);
+    fprintf(out, "  Total gap duration:       %.2fs\n", total_gap / 1000.0);
+    fprintf(out, "  Large gaps (>5s):         %d\n", large_gaps);
+    fprintf(out, "  Small gaps (<100ms):      %d\n", small_gaps);
+    
+    if (large_gaps == 0) {
+        fprintf(out, "  Status:                   ✓ No suspicious gaps detected\n");
+    } else {
+        fprintf(out, "  Status:                   ⚠ Check for missing cues\n");
+    }
+    fprintf(out, "\n");
+}
+
+/*
+ * Generate a simple timing summary for all cues.
+ * Useful for quick visual inspection of subtitle timing structure.
+ */
+void srt_print_timing_summary(const SRTEntry *entries, int n_cues, FILE *out, int max_rows) {
+    if (!entries || n_cues == 0 || !out) return;
+    
+    if (max_rows <= 0) max_rows = 10;  /* Default to first 10 cues */
+    if (max_rows > n_cues) max_rows = n_cues;
+    
+    fprintf(out, "\n=== Timing Summary (first %d of %d cues) ===\n", max_rows, n_cues);
+    fprintf(out, "Cue#  Start       End         Duration  Gap to next\n");
+    fprintf(out, "─────────────────────────────────────────────────────\n");
+    
+    for (int i = 0; i < max_rows; i++) {
+        int64_t duration = entries[i].end_ms - entries[i].start_ms;
+        int64_t gap = (i + 1 < n_cues) ? (entries[i+1].start_ms - entries[i].end_ms) : 0;
+        
+        fprintf(out, "%3d   %8.2fs   %8.2fs   %6lldms   %6lldms\n",
+            i + 1,
+            entries[i].start_ms / 1000.0,
+            entries[i].end_ms / 1000.0,
+            (long long)duration,
+            (long long)gap);
+    }
+    
+    if (max_rows < n_cues) {
+        fprintf(out, "... (%d more cues)\n", n_cues - max_rows);
+    }
+    fprintf(out, "\n");
+}
+

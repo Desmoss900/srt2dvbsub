@@ -31,10 +31,7 @@ int validate_language_list(const char *lang_str, char *errmsg)
         return -ENOMEM;
     }
 
-    char *seen_codes[256];  /* Track seen codes for duplicate detection */
-    int seen_count = 0;
     int position = 0;
-    int has_duplicates = 0;
 
     char *saveptr = NULL;
     char *token = strtok_r(working_copy, ",", &saveptr);
@@ -61,38 +58,7 @@ int validate_language_list(const char *lang_str, char *errmsg)
             return -EINVAL;
         }
 
-        /* Check for duplicates */
-        for (int i = 0; i < seen_count; i++) {
-            if (strcmp(seen_codes[i], trimmed) == 0) {
-                if (!has_duplicates) {
-                    /* First duplicate found; report both positions */
-                    snprintf(errmsg, 512, "Duplicate language code '%s' at positions %d and %d",
-                             trimmed, i + 1, position);  /* i+1 because i is 0-based but position is 1-based */
-                    has_duplicates = 1;
-                }
-                free(working_copy);
-                return -ENOTSUP;
-            }
-        }
-
-        /* Add to seen list if not a duplicate */
-        if (seen_count < 256) {
-            /* Make a copy of the trimmed code */
-            char *code_copy = strdup(trimmed);
-            if (!code_copy) {
-                snprintf(errmsg, 512, "Out of memory tracking language codes");
-                free(working_copy);
-                return -ENOMEM;
-            }
-            seen_codes[seen_count++] = code_copy;
-        }
-
         token = strtok_r(NULL, ",", &saveptr);
-    }
-
-    /* Cleanup seen_codes array */
-    for (int i = 0; i < seen_count; i++) {
-        free(seen_codes[i]);
     }
 
     free(working_copy);
@@ -106,6 +72,7 @@ int parse_language_list(const char *lang_str, lang_entry **lang_entries, int *co
 
     *lang_entries = NULL;
     *count = 0;
+    errmsg[0] = '\0';
 
     char *working_copy = strdup(lang_str);
     if (!working_copy) {
@@ -113,12 +80,8 @@ int parse_language_list(const char *lang_str, lang_entry **lang_entries, int *co
         return -ENOMEM;
     }
 
-    char *seen_codes[256];  /* Track seen codes for duplicate detection */
-    int seen_count = 0;
     int position = 0;
-    int has_duplicates = 0;
-    int first_dup_pos1 = -1, first_dup_pos2 = -1;
-    char first_dup_code[4] = "";
+    int duplicate_detected = 0;
 
     char *saveptr = NULL;
     char *token = strtok_r(working_copy, ",", &saveptr);
@@ -151,40 +114,21 @@ int parse_language_list(const char *lang_str, lang_entry **lang_entries, int *co
             return -EINVAL;
         }
 
-        /* Check for duplicates */
-        for (int i = 0; i < seen_count; i++) {
-            if (strcmp(seen_codes[i], trimmed) == 0) {
-                if (!has_duplicates) {
-                    first_dup_pos1 = i + 1;  /* 1-based */
-                    first_dup_pos2 = position;
-                    strncpy(first_dup_code, trimmed, sizeof(first_dup_code) - 1);
-                    first_dup_code[sizeof(first_dup_code) - 1] = '\0';
-                    has_duplicates = 1;
-                }
-                break;  /* Don't report every duplicate after the first */
+        /* Check for duplicates (but allow them for now) */
+        for (int i = 0; i < *count; i++) {
+            if (strcmp((*lang_entries)[i].code, trimmed) == 0) {
+                duplicate_detected = 1;
+                /* Log warning but continue processing */
+                snprintf(errmsg, 512, "Duplicate language code '%s' at positions %d and %d (allowed if tracks have different flags)",
+                         trimmed, i + 1, position);
+                break;
             }
-        }
-
-        /* Add to seen list (for duplicate tracking, even if duplicate) */
-        if (seen_count < 256) {
-            char *code_copy = strdup(trimmed);
-            if (!code_copy) {
-                snprintf(errmsg, 512, "Out of memory tracking language codes");
-                free(*lang_entries);
-                free(working_copy);
-                *lang_entries = NULL;
-                *count = 0;
-                return -ENOMEM;
-            }
-            seen_codes[seen_count++] = code_copy;
         }
 
         /* Grow allocation */
         lang_entry *nv = realloc(*lang_entries, sizeof(**lang_entries) * (*count + 1));
         if (!nv) {
             snprintf(errmsg, 512, "Out of memory parsing language list");
-            for (int i = 0; i < seen_count; i++)
-                free(seen_codes[i]);
             free(*lang_entries);
             free(working_copy);
             *lang_entries = NULL;
@@ -202,21 +146,10 @@ int parse_language_list(const char *lang_str, lang_entry **lang_entries, int *co
         token = strtok_r(NULL, ",", &saveptr);
     }
 
-    /* Cleanup seen_codes array */
-    for (int i = 0; i < seen_count; i++) {
-        free(seen_codes[i]);
-    }
-
     free(working_copy);
 
-    /* Report duplicates if found */
-    if (has_duplicates) {
-        snprintf(errmsg, 512, "Duplicate language code '%s' at positions %d and %d",
-                 first_dup_code, first_dup_pos1, first_dup_pos2);
-        return -ENOTSUP;
-    }
-
-    return 0;
+    /* Return success even if duplicates found - validation happens at track level */
+    return duplicate_detected ? -ENOTSUP : 0;
 }
 
 int get_language_count(const char *lang_str)

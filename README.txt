@@ -74,7 +74,7 @@ Primary use cases:
 3.3 DVB Subtitle Generation
   ✓ MPEG-TS multiplexing with subtitle tracks
   ✓ DVB Page Composition Segment (PCS) generation
-  ✓ Palette mode selection (EBU broadcast, broadcast, web, legacy)
+  ✓ Palette mode selection (EBU broadcast, broadcast, greyscale)
   ✓ Automatic dithering for color reduction
   ✓ Unsharp mask filter for text clarity (optional)
   ✓ Supersample anti-aliasing (SSAA) with configurable factors
@@ -180,7 +180,17 @@ Primary use cases:
     --languages eng,deu \
     --delay 100,200
 
-5.5 Quality Control Check Only
+5.5 Multiple Tracks of Same Language
+  # Add English subtitles and English hearing-impaired subtitles
+  # (both labeled as 'eng' but differentiated by flags)
+  srt2dvbsub \
+    --input video.ts \
+    --output video_with_subs.ts \
+    --srt eng_standard.srt,eng_hi.srt \
+    --languages eng,eng \
+    --hi 0,1
+
+5.6 Quality Control Check Only
   # Validate subtitles without encoding
   srt2dvbsub \
     --qc-only \
@@ -221,6 +231,11 @@ Primary use cases:
       • Format: eng,deu,fra,etc.
       • Must have same count as --srt files
       • Use --help to see complete list of valid codes
+      • Duplicate language codes allowed but MUST have different flags
+      • Example: "eng,eng,deu" is allowed ONLY if tracks 0 and 1 have
+        different --forced or --hi settings (see section 6.5)
+      • Invalid: "--languages eng,eng --hi 0,0" (both same lang + same flags)
+      • Valid: "--languages eng,eng --hi 0,1" (same lang + different flags)
 
 
 6.2 Rendering & Appearance Options
@@ -285,11 +300,10 @@ Primary use cases:
 6.3 DVB Subtitle Options
   --palette MODE
       Palette mode for color reduction
-      • Modes: "ebu-broadcast", "broadcast", "web", "legacy"
+      • Modes: "ebu-broadcast", "broadcast", "greyscale"
       • ebu-broadcast: EBU R207 standard colors (recommended for broadcast)
       • broadcast: Broadcast standard palette
-      • web: Extended web-safe colors
-      • legacy: Historical/legacy color palette
+      • greysacle: 
       • Default: ebu-broadcast
       • Affects how colors are dithered to DVB palette
       
@@ -322,17 +336,32 @@ Primary use cases:
 
 
 6.5 Subtitle Attributes
-  --forced
-      Mark all subtitle tracks as forced
+  --forced FLAGS
+      Comma-separated forced flags per track (default: all 0)
+      • Format: "0,1,0" where 1=forced, 0=not forced
+      • One value per track in --srt order
+      • If fewer values than tracks, missing tracks default to 0
+      • Examples:
+        - "--forced 1": First track is forced, rest default to 0
+        - "--forced 0,1": First not forced, second forced
+        - "--forced 1,1,0": First two forced, third not forced
       • Forced subtitles appear only when default audio language differs
       • Typical use: signs and text that must always be visible
-      • Affects DVB subtitle page composition
+      • Note: Duplicate language codes REQUIRE different forced/hi flags
       
-  --hi
-      Mark all subtitle tracks as hearing-impaired
+  --hi FLAGS
+      Comma-separated hearing-impaired flags per track (default: all 0)
+      • Format: "0,0,1" where 1=hearing-impaired, 0=regular
+      • One value per track in --srt order
+      • If fewer values than tracks, missing tracks default to 0
+      • Examples:
+        - "--hi 1": First track is hearing-impaired, rest default to 0
+        - "--hi 0,0,1": Only third track is hearing-impaired
+        - "--hi 1,1,0": First two are hearing-impaired, third is regular
       • Hearing-impaired subtitles include sound descriptions
       • Affects DVB subtitle page composition and signaling
-      • Example: "[DOOR OPENS]" or "[MUSIC PLAYING]"
+      • Example content: "[DOOR OPENS]" or "[MUSIC PLAYING]"
+      • Note: Duplicate language codes REQUIRE different forced/hi flags
 
 
 6.6 Performance & Threading
@@ -485,37 +514,20 @@ Primary use cases:
 srt2dvbsub supports all standard DVB 3-letter ISO 639-2 language codes.
 Common codes include:
 
-  eng = English
-  deu = German
-  fra = French
-  spa = Spanish
-  ita = Italian
-  por = Portuguese
-  rus = Russian
-  jpn = Japanese
-  zho = Chinese
-  ara = Arabic
-  heb = Hebrew
-  pol = Polish
-  tur = Turkish
-  ell = Greek
-  swe = Swedish
-  dan = Danish
-  fin = Finnish
-  nor = Norwegian
-  nld = Dutch
-  hsa = Hungarian
-  ces = Czech
-  kat = Georgian
-  ron = Romanian
-  slk = Slovak
-  srp = Serbian
-  bul = Bulgarian
-  hrv = Croatian
-  ukr = Ukrainian
-
-Use --help to see the complete list of 100+ supported language codes
-formatted dynamically for your terminal width.
+  eng  English / English           fin  Finnish / Suomi              heb  Hebrew / עברית               pan  Punjabi / ਪੰਜਾਬੀ
+  deu  German / Deutsch            pol  Polish / Polski              ara  Arabic / العربية             urd  Urdu / اردو
+  fra  French / Français           ces  Czech / Čeština              tur  Turkish / Türkçe             vie  Vietnamese / Tiếng Việt
+  spa  Spanish / Español           slk  Slovak / Slovenčina          ell  Greek / Ελληνικά             tha  Thai / ไทย
+  ita  Italian / Italiano          slv  Slovenian / Slovenščina      cat  Catalan / Català             ind  Indonesian / Bahasa Indonesia
+  por  Portuguese / Português      hrv  Croatian / Hrvatski          gle  Irish / Gaeilge              msa  Malay / Bahasa Melayu
+  rus  Russian / Русский           ron  Romanian / Română            eus  Basque / Euskara             sin  Sinhala / සිංහල
+  jpn  Japanese / 日本語            bul  Bulgarian / Български        glg  Galician / Galego            khm  Khmer / ភាសាខ្មែរ
+  zho  Chinese / 中文               ukr  Ukrainian / Українська       srp  Serbian / Српски             lao  Lao / ລາວ
+  kor  Korean / 한국어               bel  Belarusian / Беларуская      mkd  Macedonian / Македонски      mon  Mongolian / Монгол
+  nld  Dutch / Nederlands          est  Estonian / Eesti             alb  Albanian / Shqip             fas  Persian / فارسی
+  swe  Swedish / Svenska           lav  Latvian / Latviešu           hin  Hindi / हिन्दी
+  dan  Danish / Dansk              lit  Lithuanian / Lietuvių        tam  Tamil / தமிழ்
+  nor  Norwegian / Norsk           hun  Hungarian / Magyar           tel  Telugu / తెలుగు
 
 
 9. EXAMPLES

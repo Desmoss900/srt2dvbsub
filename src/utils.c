@@ -111,8 +111,8 @@ void print_help(void)
 #ifdef HAVE_LIBASS
     printf("      --ass                   Enable libass rendering\n");
 #endif
-    printf("      --forced                Mark subtitle streams as forced\n");
-    printf("      --hi                    Mark subtitle streams as hearing-impaired\n");
+    printf("      --forced FLAGS          Comma-separated forced flags per track (e.g., \"0,1,0\")\n");
+    printf("      --hi FLAGS              Comma-separated hearing-impaired flags per track (e.g., \"0,0,1\")\n");
 #ifdef HAVE_FONTCONFIG
     printf("      --list-fonts            List available font families/styles and exit\n");
 #else

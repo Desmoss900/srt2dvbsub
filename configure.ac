@@ -26,7 +26,6 @@ PKG_CHECK_MODULES([FFMPEG],
    libswscale  >= 5.0.0],
   [],
   [AC_MSG_ERROR([Missing FFmpeg development libraries (libavformat, libavcodec, libavutil, libswscale)])])
-AC_DEFINE([HAVE_FONTCONFIG], [1], [Define if fontconfig is available])
 
 # Use pkg-config for deps. Check each module individually so we can
 # report the exact installed version for diagnostics and build-info.
@@ -82,6 +81,7 @@ if pkg-config --exists "fontconfig >= 2.15.0"; then
   FONTCONFIG_CFLAGS="`pkg-config --cflags fontconfig 2>/dev/null || echo`"
   FONTCONFIG_LIBS="`pkg-config --libs fontconfig 2>/dev/null || echo`"
   AC_MSG_RESULT([yes ($FONTCONFIG_VERSION)])
+  AC_DEFINE([HAVE_FONTCONFIG], [1], [Define if fontconfig is available])
 else
   AC_MSG_RESULT([no])
   AC_MSG_ERROR([Required library 'fontconfig' >= 2.15.0 not found. Install/upgrade fontconfig development files.])
@@ -134,21 +134,58 @@ if test "x$enable_thread_safe_mux" = "xno"; then
   AC_MSG_NOTICE([Thread-safe mux disabled])
 fi
 
+# Allow explicit override of version info for release builds
+AC_ARG_WITH([git-version],
+  AS_HELP_STRING([--with-git-version=VERSION], [Override GIT_VERSION (for releases)]),
+  [override_git_version="$withval"],
+  [override_git_version=""])
 
+AC_ARG_WITH([git-commit],
+  AS_HELP_STRING([--with-git-commit=COMMIT], [Override GIT_COMMIT (for releases)]),
+  [override_git_commit="$withval"],
+  [override_git_commit=""])
 
-# Detect Git version info or fall back to PACKAGE_VERSION
+AC_ARG_WITH([git-date],
+  AS_HELP_STRING([--with-git-date=DATE], [Override GIT_DATE (for releases, ISO format)]),
+  [override_git_date="$withval"],
+  [override_git_date=""])
+
+# Detect Git version info or fall back to PACKAGE_VERSION, unless overridden
 AC_MSG_CHECKING([for git version info])
-if test -d .git; then
+if test -n "$override_git_version" ; then
+  GIT_VERSION="$override_git_version"
+  AC_MSG_RESULT([using --with-git-version=$GIT_VERSION])
+elif test -d ../.git; then
   GIT_VERSION=`git describe --tags --always --dirty 2>/dev/null || echo "unknown"`
-  GIT_COMMIT=`git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
-  GIT_DATE=`git log -1 --format=%cd --date=iso 2>/dev/null || date -Iseconds`
+  AC_MSG_RESULT([$GIT_VERSION (detected from git)])
 else
   GIT_VERSION="${PACKAGE_VERSION}"
-  GIT_COMMIT="release"
-  GIT_DATE=`date -Iseconds`
+  AC_MSG_RESULT([$GIT_VERSION (fallback to PACKAGE_VERSION)])
 fi
 
-AC_MSG_RESULT([$GIT_VERSION ($GIT_COMMIT, $GIT_DATE)])
+AC_MSG_CHECKING([for git commit info])
+if test -n "$override_git_commit" ; then
+  GIT_COMMIT="$override_git_commit"
+  AC_MSG_RESULT([using --with-git-commit=$GIT_COMMIT])
+elif test -d ../.git; then
+  GIT_COMMIT=`git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
+  AC_MSG_RESULT([$GIT_COMMIT (detected from git)])
+else
+  GIT_COMMIT="release"
+  AC_MSG_RESULT([$GIT_COMMIT (fallback)])
+fi
+
+AC_MSG_CHECKING([for git date info])
+if test -n "$override_git_date" ; then
+  GIT_DATE="$override_git_date"
+  AC_MSG_RESULT([using --with-git-date=$GIT_DATE])
+elif test -d ../.git; then
+  GIT_DATE=`git log -1 --format=%cd --date=iso 2>/dev/null || date -Iseconds`
+  AC_MSG_RESULT([$GIT_DATE (detected from git)])
+else
+  GIT_DATE=`date -Iseconds`
+  AC_MSG_RESULT([$GIT_DATE (current date)])
+fi
 
 # Export to Makefile substitutions (correct shell assignment)
 AC_SUBST(GIT_VERSION)

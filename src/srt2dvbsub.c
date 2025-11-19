@@ -155,6 +155,8 @@
  *   cli_outlinecolor    Outline color for CLI rendering.
  *   cli_shadowcolor     Shadow color for CLI rendering.
  *   cli_bgcolor         Background color for CLI rendering.
+ *   cli_forced_list     Comma-separated forced flags per track.
+ *   cli_hi_list         Comma-separated hearing-impaired flags per track.
  *   subtitle_delay_list List of subtitle delay values.
  *   delay_vals          Array of delay values for each track.
  *   out_fmt             Output format context (FFmpeg).
@@ -181,6 +183,8 @@ struct MainCtx {
     const char *cli_outlinecolor;
     const char *cli_shadowcolor;
     const char *cli_bgcolor;
+    char *cli_forced_list;
+    char *cli_hi_list;
     char *subtitle_delay_list;
     int *delay_vals;
     AVFormatContext *out_fmt;
@@ -271,8 +275,8 @@ static int cli_parse(int argc, char **argv,
                           const char **output,
                           char **srt_list,
                           char **lang_list,
-                          int *forced,
-                          int *hi,
+                          char **forced_list,
+                          char **hi_list,
                           int *qc_only,
                           int *bench_mode,
                           const char **palette_mode,
@@ -295,8 +299,8 @@ static int cli_parse(int argc, char **argv,
         {"output", required_argument, 0, 'o'},
         {"srt", required_argument, 0, 's'},
         {"languages", required_argument, 0, 'l'},
-        {"forced", no_argument, 0, 1000},
-        {"hi", no_argument, 0, 1001},
+        {"forced", required_argument, 0, 1000},
+        {"hi", required_argument, 0, 1001},
         {"debug", required_argument, 0, 1002},
         {"qc-only", no_argument, 0, 1003},
         {"bench", no_argument, 0, 1004},
@@ -371,10 +375,18 @@ static int cli_parse(int argc, char **argv,
             print_help();
             return 0;
         case 1000:
-            *forced = 1;
+            if (replace_strdup((const char **)forced_list, optarg) != 0) {
+                LOG(0, "Out of memory while setting forced flags\n");
+                return 1;
+            }
+            ctx->cli_forced_list = *forced_list;
             break;
         case 1001:
-            *hi = 1;
+            if (replace_strdup((const char **)hi_list, optarg) != 0) {
+                LOG(0, "Out of memory while setting hi flags\n");
+                return 1;
+            }
+            ctx->cli_hi_list = *hi_list;
             break;
         case 1002:
             *debug_level = atoi(optarg);
@@ -888,6 +900,55 @@ static int ctx_init(struct MainCtx *ctx,
     return 0;
 }
 
+/**
+ * parse_flag_list: Parse a comma-separated list of flags (0/1) into an array
+ * @param flag_str Comma-separated flags (e.g., "0,1,0" or "1")
+ * @param track_count Number of expected tracks
+ * @param flags Output array to fill with parsed flags (must be pre-allocated)
+ * @param max_tracks Maximum size of flags array
+ * @return 0 on success, -1 on error
+ * 
+ * If flag_str is NULL, all flags default to 0.
+ * If flag_str has fewer entries than track_count, remaining entries default to 0.
+ */
+static int parse_flag_list(const char *flag_str, int track_count, int *flags, int max_tracks)
+{
+    if (!flags || track_count <= 0 || track_count > max_tracks)
+        return -1;
+    
+    /* Initialize all flags to 0 */
+    for (int i = 0; i < track_count; i++)
+        flags[i] = 0;
+    
+    if (!flag_str || *flag_str == '\0')
+        return 0;  /* All flags remain 0 */
+    
+    char *copy = strdup(flag_str);
+    if (!copy)
+        return -1;
+    
+    int idx = 0;
+    char *saveptr = NULL;
+    char *token = strtok_r(copy, ",", &saveptr);
+    
+    while (token && idx < track_count) {
+        char *trimmed = trim_string_inplace(token);
+        if (*trimmed == '\0') {
+            idx++;
+            token = strtok_r(NULL, ",", &saveptr);
+            continue;
+        }
+        
+        int val = atoi(trimmed);
+        flags[idx] = (val != 0) ? 1 : 0;
+        idx++;
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    
+    free(copy);
+    return 0;
+}
+
 /*
  * ctx_parse_tracks: process tokenized SRT/lang lists, parse SRT files or
  * inject ASS events (when enabled), create output streams and open encoders.
@@ -904,7 +965,7 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
                                  int debug_level,
                                  int video_w, int video_h,
                                  const AVCodec *codec,
-                                 int forced, int hi,
+                                 const int *forced_flags, const int *hi_flags,
                                  int use_ass,
                                  int bench_mode,
                                  FILE *qc,
@@ -954,8 +1015,12 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
             ctx_cleanup(ctx);
             return ret;
         }
-        tracks[*ntracks].forced = forced;
-        tracks[*ntracks].hi = hi;
+        /* Get per-track forced/hi flags from arrays (defaultto 0 if arrays NULL or index out of bounds) */
+        int track_forced = (forced_flags && *ntracks < 8) ? forced_flags[*ntracks] : 0;
+        int track_hi = (hi_flags && *ntracks < 8) ? hi_flags[*ntracks] : 0;
+        
+        tracks[*ntracks].forced = track_forced;
+        tracks[*ntracks].hi = track_hi;
         tracks[*ntracks].last_pts = AV_NOPTS_VALUE;
 
         int track_delay_ms = 0;
@@ -972,8 +1037,22 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
         }
 
         if (!use_ass) {
+            /* Configure parser with robustness settings */
+            SRTParserConfig cfg = {
+                .use_ass = 0,
+                .video_w = video_w,
+                .video_h = video_h,
+                .validation_level = SRT_VALIDATE_AUTO_FIX,
+                .max_line_length = 200,
+                .max_line_count = 5,
+                .auto_fix_duplicates = 1,
+                .auto_fix_encoding = 1,
+                .warn_on_short_duration = 1,
+                .warn_on_long_duration = 1
+            };
+            
             int64_t t0 = bench_now();
-            int count = parse_srt(tok, &tracks[*ntracks].entries, qc);
+            int count = parse_srt_cfg(tok, &tracks[*ntracks].entries, qc, &cfg);
             if (bench_mode) {
                 int64_t delta_parse = bench_now() - t0;
                 bench_add_parse_us(delta_parse);
@@ -1032,9 +1111,23 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
             if (debug_level > 0)
                 render_ass_debug_styles(tracks[*ntracks].ass_track);
 
+            /* Configure parser with robustness settings */
+            SRTParserConfig cfg = {
+                .use_ass = 1,
+                .video_w = video_w,
+                .video_h = video_h,
+                .validation_level = SRT_VALIDATE_AUTO_FIX,
+                .max_line_length = 200,
+                .max_line_count = 5,
+                .auto_fix_duplicates = 1,
+                .auto_fix_encoding = 1,
+                .warn_on_short_duration = 1,
+                .warn_on_long_duration = 1
+            };
+            
             SRTEntry *entries = NULL;
             int64_t t0 = bench_now();
-            int count = parse_srt(tok, &entries, qc);
+            int count = parse_srt_cfg(tok, &entries, qc, &cfg);
             if (bench_mode) {
                 int64_t delta_parse = bench_now() - t0;
                 bench_add_parse_us(delta_parse);
@@ -1667,8 +1760,25 @@ static int ctx_run_qc_only(struct MainCtx *ctx,
     {
         qc_reset_counts();
         SRTEntry *entries = NULL;
+        
+        /* Configure parser with robustness settings */
+        SRTParserConfig cfg = {
+            .use_ass = 0,
+            .video_w = 1920,
+            .video_h = 1080,
+            .validation_level = SRT_VALIDATE_AUTO_FIX,
+            .max_line_length = 200,
+            .max_line_count = 5,
+            .auto_fix_duplicates = 1,
+            .auto_fix_encoding = 1,
+            .warn_on_short_duration = 1,
+            .warn_on_long_duration = 1
+        };
+        
+        SRTParserStats stats = {0};
+        
         int64_t t0 = bench_now();
-        int count = parse_srt(fnames[i], &entries, qc);
+        int count = parse_srt_with_stats(fnames[i], &entries, qc, &cfg, &stats);
         if (bench_mode) {
             int64_t delta_parse = bench_now() - t0;
             bench_add_parse_us(delta_parse);
@@ -1690,6 +1800,15 @@ static int ctx_run_qc_only(struct MainCtx *ctx,
         if (debug_level > 0)
             printf("QC-only: %s (%s), cues=%d forced=%d hi=%d errors=%d\n",
                    fnames[i], langs[i], count, forced, hi, file_errors);
+
+        /* Output parser diagnostics for this file */
+        printf("\n=== Parser Diagnostics for '%s' ===\n", fnames[i]);
+        srt_report_stats(&stats, stdout);
+        if (count > 0) {
+            srt_analyze_gaps(entries, count, stdout);
+            srt_print_timing_summary(entries, count, stdout, 10);
+        }
+        printf("\n");
 
         for (int j = 0; j < count; j++)
             free(entries[j].text);
@@ -1855,6 +1974,14 @@ static void ctx_cleanup(struct MainCtx *ctx)
         free((void *)ctx->cli_bgcolor);
     }
     ctx->cli_bgcolor = NULL;
+    if (ctx->cli_forced_list) {
+        free(ctx->cli_forced_list);
+        ctx->cli_forced_list = NULL;
+    }
+    if (ctx->cli_hi_list) {
+        free(ctx->cli_hi_list);
+        ctx->cli_hi_list = NULL;
+    }
     if (ctx->subtitle_delay_list) {
         free(ctx->subtitle_delay_list);
         ctx->subtitle_delay_list = NULL;
@@ -2029,12 +2156,13 @@ int main(int argc, char **argv)
     
     /*
      * Variables for subtitle processing options:
-     * - forced: Indicates if only forced subtitles should be processed.
-     * - hi: Indicates if hearing-impaired subtitles should be included.
+     * - forced_list: Comma-separated forced flags per track (e.g., "0,1,0" or "1")
+     * - hi_list: Comma-separated hearing-impaired flags per track (e.g., "0,0,1")
      * - qc_only: Indicates if only quality control subtitles should be processed.
      * - bench_mode: Enables benchmarking mode for performance testing.
      */
-    int forced = 0, hi = 0, qc_only = 0, bench_mode = 0;
+    char *forced_list = NULL, *hi_list = NULL;
+    int qc_only = 0, bench_mode = 0;
     
     /*
      * Specifies the palette mode to be used for subtitle rendering.
@@ -2100,8 +2228,8 @@ int main(int argc, char **argv)
                                       &output,
                                       &srt_list,
                                       &lang_list,
-                                      &forced,
-                                      &hi,
+                                      &forced_list,
+                                      &hi_list,
                                       &qc_only,
                                       &bench_mode,
                                       &palette_mode,
@@ -2234,7 +2362,7 @@ int main(int argc, char **argv)
 
     if (qc_only)
     {
-        int qc_ret = ctx_run_qc_only(&ctx, srt_list, lang_list, forced, hi, bench_mode, debug_level);
+        int qc_ret = ctx_run_qc_only(&ctx, srt_list, lang_list, 0, 0, bench_mode, debug_level);
         return finalize_main(&ctx, ctx_cleaned, qc_ret);
     }
 
@@ -2272,9 +2400,13 @@ int main(int argc, char **argv)
     out_fmt = ctx.out_fmt;
     delay_vals = ctx.delay_vals;
 
+    /* Initialize empty flag arrays - will be populated after we know track count */
+    int forced_flags[8] = {0};
+    int hi_flags[8] = {0};
+
     ret = ctx_parse_tracks(&ctx, tracks, &ntracks, tok, tok_lang, &save_srt, &save_lang,
                                 delay_count, subtitle_delay_ms, debug_level,
-                                video_w, video_h, codec, forced, hi, use_ass,
+                                video_w, video_h, codec, forced_flags, hi_flags, use_ass,
                                 bench_mode, qc, cli_fontsize, cli_font,
                                 cli_font_style,
                                 cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
@@ -2283,6 +2415,48 @@ int main(int argc, char **argv)
         /* ctx_parse_tracks already cleaned up ctx on failure */
         ctx_cleaned = true;
         return ret;
+    }
+
+    /* Parse per-track forced/hi flags from CLI context now that we know ntracks */
+    LOG(2, "DEBUG: After ctx_parse_tracks: ntracks=%d, ctx.cli_forced_list=%s, ctx.cli_hi_list=%s\n", 
+        ntracks, ctx.cli_forced_list ? ctx.cli_forced_list : "(null)", 
+        ctx.cli_hi_list ? ctx.cli_hi_list : "(null)");
+    
+    if (parse_flag_list(ctx.cli_forced_list, ntracks, forced_flags, 8) != 0) {
+        LOG(0, "Failed to parse forced flags (ntracks=%d, ctx.cli_forced_list=%s)\n", 
+            ntracks, ctx.cli_forced_list ? ctx.cli_forced_list : "(null)");
+        ctx_cleanup(&ctx);
+        return 1;
+    }
+    if (parse_flag_list(ctx.cli_hi_list, ntracks, hi_flags, 8) != 0) {
+        LOG(0, "Failed to parse hearing-impaired flags (ntracks=%d, ctx.cli_hi_list=%s)\n",
+            ntracks, ctx.cli_hi_list ? ctx.cli_hi_list : "(null)");
+        ctx_cleanup(&ctx);
+        return 1;
+    }
+
+    /* Apply parsed flags to tracks */
+    for (int i = 0; i < ntracks; i++) {
+        tracks[i].forced = forced_flags[i];
+        tracks[i].hi = hi_flags[i];
+    }
+
+    /* Validate that duplicate language codes have different flags */
+    for (int i = 0; i < ntracks; i++) {
+        for (int j = i + 1; j < ntracks; j++) {
+            if (strcmp(tracks[i].lang, tracks[j].lang) == 0) {
+                /* Same language code - check if flags are different */
+                int flags_same = (tracks[i].forced == tracks[j].forced) && 
+                               (tracks[i].hi == tracks[j].hi);
+                if (flags_same) {
+                    LOG(0, "Error: Tracks %d and %d both have language '%s' with identical flags\n",
+                        i, j, tracks[i].lang);
+                    LOG(0, "       Duplicate language codes require different --forced or --hi flags\n");
+                    ctx_cleanup(&ctx);
+                    return 1;
+                }
+            }
+        }
     }
 
     /* Open the output file (unless the muxer uses I/O callbacks). This

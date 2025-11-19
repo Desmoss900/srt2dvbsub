@@ -259,54 +259,58 @@ void init_palette(uint32_t *pal,const char *mode) {
      *   pal  - Array of 16 uint32_t values to be filled with palette colors.
      */
     if (mode && strcasecmp(mode,"greyscale")==0) {
-    /* Smooth greyscale from transparent to white */
-    pal[0] = 0x00000000; /* transparent */
+        /* Smooth greyscale from transparent to white */
+        pal[0] = 0x00000000; /* transparent */
         for (int i=1; i<16; i++) {
             int v = (i-1)*17;
             pal[i] = (0xFF<<24) | (v<<16) | (v<<8) | v;
         }
-
     } else if (mode && strcasecmp(mode,"broadcast")==0) {
-    /* Broadcast palette with additional half-bright entries (helps anti-aliased edges) */
-        pal[0]=0x00000000; pal[1]=0xFFFFFFFF; pal[2]=0xFFFFFF00;
-        pal[3]=0xFF00FFFF; pal[4]=0xFF00FF00; pal[5]=0xFFFF00FF;
-        pal[6]=0xFFFF0000; pal[7]=0xFF0000FF; pal[8]=0xFF000000;
+        /* Broadcast palette with additional half-bright entries (helps anti-aliased edges) */
+        pal[0]=0x00000000; 
+        pal[1]=0xFFFFFFFF; 
+        pal[2]=0xFFFFFF00;
+        pal[3]=0xFF00FFFF; 
+        pal[4]=0xFF00FF00; 
+        pal[5]=0xFFFF00FF;
+        pal[6]=0xFFFF0000; 
+        pal[7]=0xFF0000FF;
+        pal[8]=0xFF000000;
         /* half-bright variants (opaque but half RGB) to provide intermediate
         * luminance values for anti-aliased edges without introducing
         * semi-transparent compositing halos. Use full alpha (0xFF) and
         * halve RGB channels. */
-    pal[9]  = 0xFF7F7F7F; /* half white */
-    pal[10] = 0xFF7F7F00; /* half yellow */
-    pal[11] = 0xFF007F7F; /* half cyan */
-    pal[12] = 0xFF007F00; /* half green */
-    pal[13] = 0xFF7F007F; /* half magenta */
-    pal[14] = 0xFF7F0000; /* half red */
-    pal[15] = 0xFF00007F; /* half blue */
+        pal[9]  = 0xFF7F7F7F; /* half white */
+        pal[10] = 0xFF7F7F00; /* half yellow */
+        pal[11] = 0xFF007F7F; /* half cyan */
+        pal[12] = 0xFF007F00; /* half green */
+        pal[13] = 0xFF7F007F; /* half magenta */
+        pal[14] = 0xFF7F0000; /* half red */
+        pal[15] = 0xFF00007F; /* half blue */
 
     } else if (mode && strcasecmp(mode,"ebu-broadcast")==0) {
-    /* Full EBU 16-color CLUT (full + half brightness) */
-    pal[0]  = 0x00000000; /* transparent */
-    pal[1]  = 0xFFFFFFFF; /* white */
-    pal[2]  = 0xFFFFFF00; /* yellow */
-    pal[3]  = 0xFF00FFFF; /* cyan */
-    pal[4]  = 0xFF00FF00; /* green */
-    pal[5]  = 0xFFFF00FF; /* magenta */
-    pal[6]  = 0xFFFF0000; /* red */
-    pal[7]  = 0xFF0000FF; /* blue */
-    pal[8]  = 0xFF000000; /* black */
+        /* Full EBU 16-color CLUT (full + half brightness) */
+        pal[0]  = 0x00000000; /* transparent */
+        pal[1]  = 0xFFFFFFFF; /* white */
+        pal[2]  = 0xFFFFFF00; /* yellow */
+        pal[3]  = 0xFF00FFFF; /* cyan */
+        pal[4]  = 0xFF00FF00; /* green */
+        pal[5]  = 0xFFFF00FF; /* magenta */
+        pal[6]  = 0xFFFF0000; /* red */
+        pal[7]  = 0xFF0000FF; /* blue */
+        pal[8]  = 0xFF000000; /* black */
         /* half-bright variants (opaque half-RGB) rather than semi-transparent
         * entries: helps anti-aliased edges map to intermediate visible
         * colors without compositing dark halos. */
-    pal[9]  = 0xFF7F7F7F; /* half white */
-    pal[10] = 0xFF7F7F00; /* half yellow */
-    pal[11] = 0xFF007F7F; /* half cyan */
-    pal[12] = 0xFF007F00; /* half green */
-    pal[13] = 0xFF7F007F; /* half magenta */
-    pal[14] = 0xFF7F0000; /* half red */
-    pal[15] = 0xFF00007F; /* half blue */
-
+        pal[9]  = 0xFF7F7F7F; /* half white */
+        pal[10] = 0xFF7F7F00; /* half yellow */
+        pal[11] = 0xFF007F7F; /* half cyan */
+        pal[12] = 0xFF007F00; /* half green */
+        pal[13] = 0xFF7F007F; /* half magenta */
+        pal[14] = 0xFF7F0000; /* half red */
+        pal[15] = 0xFF00007F; /* half blue */
     } else {
-    /* Default: same as simple broadcast */
+        /* Default: same as simple broadcast */
         pal[0]=0x00000000; pal[1]=0xFFFFFFFF; pal[2]=0xFFFFFF00;
         pal[3]=0xFF00FFFF; pal[4]=0xFF00FF00; pal[5]=0xFFFF00FF;
         pal[6]=0xFFFF0000; pal[7]=0xFF000000;
@@ -417,6 +421,41 @@ static int nearest_palette_index_display(uint32_t *palette, int npal, double rd,
     }
     return best;
 }
+
+/* nearest_palette_index_display_skip_transparent: like above but skips index 0
+ * (which is always fully transparent in DVB subtitles). Used for background color
+ * quantization to ensure the background doesn't vanish. */
+static int nearest_palette_index_display_skip_transparent(uint32_t *palette, int npal, double rd, double gd, double bd, int src_alpha) {
+    int best = 1;
+    double bestdiff = 1e308;
+    const double alpha_weight = 10.0;
+    for (int i = 1; i < npal; i++) {  /* START AT 1 TO SKIP TRANSPARENT INDEX 0 */
+        uint32_t p = palette[i];
+        double pa = ((p >> 24) & 0xFF) / 255.0;
+        if (src_alpha >= 240 && pa < 0.99) continue;
+        if (src_alpha >= 16 && pa < 0.01) continue;
+        double pr = ((p >> 16) & 0xFF) * pa;
+        double pg = ((p >> 8) & 0xFF) * pa;
+        double pb = (p & 0xFF) * pa;
+        double dr = rd - pr;
+        double dg = gd - pg;
+        double db = bd - pb;
+        const double wr = 0.2126, wg = 0.7152, wb = 0.0722;
+        double color_diff = wr * dr * dr + wg * dg * dg + wb * db * db;
+        double src_luma = 0.2126 * rd + 0.7152 * gd + 0.0722 * bd;
+        double pal_luma = 0.2126 * pr + 0.7152 * pg + 0.0722 * pb;
+        if (src_alpha >= 200 && src_luma > 200.0 && pal_luma < src_luma - 20.0) {
+            double gap = src_luma - pal_luma;
+            color_diff += (gap * gap) * 0.08;
+        }
+        double pa255 = pa * 255.0;
+        double adiff = pa255 - (double)src_alpha;
+        double diff = color_diff + alpha_weight * (adiff * adiff);
+        if (diff < bestdiff) { bestdiff = diff; best = i; }
+    }
+    return best;
+}
+
 
 /* Allocate and return an empty, NUL-terminated string. */
 static char *alloc_empty_string(void) {
@@ -580,6 +619,8 @@ Bitmap render_text_pango(const char *markup,
                           int align_code,
                           const char *palette_mode) {
     Bitmap bm={0};
+    
+    LOG(3, "DEBUG render_text_pango: bgcolor=%s\n", bgcolor ? bgcolor : "(null)");
 
     /* Local resource pointers: initialize to NULL so cleanup is safe on any
      * early-failure path. */
@@ -619,7 +660,6 @@ Bitmap render_text_pango(const char *markup,
      *  SD:  ~18..22
      *  HD:  ~40..48
      *  UHD: ~80..88 */
-    bool add_bg = false;
     if (fontsize > 0) {
         /* respect caller-provided fontsize (no upper clamp) */
     } else {
@@ -750,27 +790,6 @@ Bitmap render_text_pango(const char *markup,
     pango_layout_set_width(layout_real, disp_w * 0.8 * PANGO_SCALE);
     pango_layout_set_wrap(layout_real, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_markup(layout_real, markup, -1);
-
-    // Background
-    double bgr=0, bgg=0, bgb=0, bga=0;
-    if (bgcolor) {
-        LOG(2, "DEBUG: Rendering background color: %s\n", bgcolor);
-        parse_bgcolor(bgcolor, &bgr, &bgg, &bgb, &bga);
-        LOG(2, "DEBUG: Parsed RGBA values: r=%f g=%f b=%f a=%f\n", bgr, bgg, bgb, bga);
-        LOG(2, "DEBUG: cairo_set_source_rgba(cr, %f, %f, %f, %f)\n", bgr, bgg, bgb, bga);
-        cairo_set_source_rgba(cr, bgr, bgg, bgb, bga);
-        LOG(2, "DEBUG: Drawing rectangle from (0,0) to (%d,%d)\n", lw+2*pad, lh+2*pad);
-        cairo_rectangle(cr, 0, 0, lw+2*pad, lh+2*pad);
-        cairo_fill(cr);
-        LOG(2, "DEBUG: Background rectangle filled\n");
-    } else if (add_bg) {
-        /* Fallback to semi-transparent black if no bgcolor specified */
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
-        cairo_rectangle(cr, 0, 0, lw+2*pad, lh+2*pad);
-        cairo_fill(cr);
-    } else {
-        LOG(2, "DEBUG: No background specified (bgcolor=%p, add_bg=%d)\n", bgcolor, add_bg);
-    }
 
     double fr,fg,fb,fa, or_,og,ob,oa, sr,sg,sb,sa;
     parse_hex_color(fgcolor, &fr,&fg,&fb,&fa);
@@ -1040,6 +1059,11 @@ Bitmap render_text_pango(const char *markup,
     int h = lh+2*pad;
     surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
     if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    
+    /* Don't fill background on cairo surface - will fill indexed bitmap instead
+     * where needed after quantization */
+    
+    /* Composite the downsampled text without background fill */
     {
         cairo_t *cr_down = cairo_create(surface);
         if (cr_down && cairo_status(cr_down) == CAIRO_STATUS_SUCCESS) {
@@ -1300,12 +1324,23 @@ Bitmap render_text_pango(const char *markup,
     int fg_palette_idx = nearest_palette_index_display(bm.palette, 16,
                                                        fg_disp_r, fg_disp_g, fg_disp_b, 255);
 
-    /* precompute background premultiplied display components if bgcolor specified */
-    double bg_disp_r = bgr * 255.0;
-    double bg_disp_g = bgg * 255.0;
-    double bg_disp_b = bgb * 255.0;
-    int bg_palette_idx = bgcolor ? nearest_palette_index_display(bm.palette, 16,
-                                                                  bg_disp_r, bg_disp_g, bg_disp_b, 255) : 0;
+    /* Precompute background palette index if bgcolor is specified */
+    int bg_palette_idx = 1;  /* default to white */
+    double bg_disp_r = 0, bg_disp_g = 0, bg_disp_b = 0;
+    if (bgcolor) {
+        double bgr=0, bgg=0, bgb=0, bga=0;
+        parse_bgcolor(bgcolor, &bgr, &bgg, &bgb, &bga);
+        bg_disp_r = bgr * 255.0;
+        bg_disp_g = bgg * 255.0;
+        bg_disp_b = bgb * 255.0;
+        /* Use skip-transparent version to ensure background never maps to index 0 */
+        bg_palette_idx = nearest_palette_index_display_skip_transparent(bm.palette, 16,
+                                                                        bg_disp_r, bg_disp_g, bg_disp_b, 255);
+        LOG(3, "DEBUG: bgcolor=%s parsed to RGB(%f,%f,%f), quantized to palette index %d\n",
+            bgcolor, bgr, bgg, bgb, bg_palette_idx);
+        uint32_t bgp = bm.palette[bg_palette_idx];
+        LOG(3, "DEBUG: palette[%d] = 0x%08x\n", bg_palette_idx, bgp);
+    }
 
     /* Apply Floyd–Steinberg error-diffusion dithering to reduce banding and
      * blockiness when mapping down to the limited 16-color palette. We keep
@@ -1330,13 +1365,26 @@ Bitmap render_text_pango(const char *markup,
         /* zero the next-row error buffers */
         for (int i = 0; i < w+2; i++) { err_r_next[i] = err_g_next[i] = err_b_next[i] = 0.0; }
 
+        int bg_pixel_count = 0;
         for (int xx = 0; xx < w; xx++) {
             uint32_t argb = *(uint32_t*)(data + yy*stride + xx*4);
             uint8_t a = (argb >> 24) & 0xFF;
                 /* lower the threshold so very soft antialiased edges still
                  * pick nearby colors instead of being forced transparent. */
                 if (a < 16) {
-                    bm.idxbuf[yy*w+xx] = 0;
+                    bg_pixel_count++;
+                    /* Fully transparent pixels: if they contain a background color
+                     * (from the cairo_fill), use the precomputed background palette index.
+                     * Otherwise map to transparent. */
+                    if (bgcolor) {
+                        if (bg_pixel_count <= 5) {  /* Log only first 5 per row */
+                            LOG(3, "DEBUG: Row %d: Using precomputed bg_palette_idx=%d for transparent pixel at x=%d\n", yy, bg_palette_idx, xx);
+                        }
+                        bm.idxbuf[yy*w+xx] = bg_palette_idx;
+                    } else {
+                        /* No background: map to transparent */
+                        bm.idxbuf[yy*w+xx] = 0;
+                    }
                     continue;
                 }
 
@@ -1345,28 +1393,10 @@ Bitmap render_text_pango(const char *markup,
              * when compositing semi-transparent pixels into the 16-color
              * palette. Errors are propagated in display units (0..255). */
             if (a >= 220) {
-                /* For opaque pixels, distinguish between foreground (text) and background.
-                 * Check color distance: if pixel is close to background color, use bg_palette_idx;
-                 * otherwise use fg_palette_idx (foreground text). */
-                uint8_t pr = (argb >> 16) & 0xFF;
-                uint8_t pg = (argb >> 8) & 0xFF;
-                uint8_t pb = argb & 0xFF;
-                
-                if (bgcolor) {
-                    /* Compute distance to both foreground and background in RGB space */
-                    double dist_to_fg = fabs((double)pr - fg_disp_r) + 
-                                       fabs((double)pg - fg_disp_g) + 
-                                       fabs((double)pb - fg_disp_b);
-                    double dist_to_bg = fabs((double)pr - bg_disp_r) + 
-                                       fabs((double)pg - bg_disp_g) + 
-                                       fabs((double)pb - bg_disp_b);
-                    
-                    /* Use background index if pixel is closer to background color */
-                    int idx = (dist_to_bg < dist_to_fg) ? bg_palette_idx : fg_palette_idx;
-                    bm.idxbuf[yy*w+xx] = idx;
-                } else {
-                    bm.idxbuf[yy*w+xx] = fg_palette_idx;
-                }
+                /* For opaque pixels, always use foreground palette index.
+                 * Background pixels (if any) should be transparent or rendered
+                 * separately, so all rendered pixels are foreground text. */
+                bm.idxbuf[yy*w+xx] = fg_palette_idx;
                 err_r_cur[xx+1] = err_g_cur[xx+1] = err_b_cur[xx+1] = 0.0;
                 continue;
             }
@@ -1470,10 +1500,27 @@ Bitmap render_text_pango(const char *markup,
         tmp = err_r_cur; err_r_cur = err_r_next; err_r_next = tmp;
         tmp = err_g_cur; err_g_cur = err_g_next; err_g_next = tmp;
         tmp = err_b_cur; err_b_cur = err_b_next; err_b_next = tmp;
+        if (bg_pixel_count > 0) {
+            LOG(3, "DEBUG: Row %d had %d background pixels\n", yy, bg_pixel_count);
+        }
     }
 
     free(err_r_cur); free(err_g_cur); free(err_b_cur);
     free(err_r_next); free(err_g_next); free(err_b_next);
+
+    /* Fill background: After quantization, any pixels still at index 0 (transparent)
+     * should show the background color if bgcolor was specified. */
+    if (bgcolor && bm.idxbuf) {
+        LOG(3, "DEBUG: Filling background color (index %d) for transparent pixels\n", bg_palette_idx);
+        int bg_filled = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (bm.idxbuf[i] == 0) {
+                bm.idxbuf[i] = bg_palette_idx;
+                bg_filled++;
+            }
+        }
+        LOG(3, "DEBUG: Filled %d pixels with background index %d\n", bg_filled, bg_palette_idx);
+    }
 
     /* Post-dither neighbor-majority cleanup (two-pass):
      * 1) Conservative 4-neighbor pass: remove isolated dark pixels surrounded
@@ -1770,15 +1817,15 @@ void parse_bgcolor(const char *hex, double *r, double *g, double *b, double *a) 
             /* malformed; fall back to white */
             rr = gg = bb = 255;
         } else {
-            LOG(2, "DEBUG parse_bgcolor: sscanf returned rr=%u gg=%u bb=%u from string '%s'\n", rr, gg, bb, hex);
+            LOG(3, "DEBUG parse_bgcolor: sscanf returned rr=%u gg=%u bb=%u from string '%s'\n", rr, gg, bb, hex);
         }
     } else {
         /* Invalid length; fall back to white and log warning if debugging */
-        LOG(2, "DEBUG parse_bgcolor: invalid length %zu, expected 7 for hex='%s'\n", hlen, hex);
+        LOG(3, "DEBUG parse_bgcolor: invalid length %zu, expected 7 for hex='%s'\n", hlen, hex);
         rr = gg = bb = 255;
     }
     *r=rr/255.0; *g=gg/255.0; *b=bb/255.0; *a=1.0;  /* alpha always 1.0 (opaque) */
-    LOG(2, "DEBUG parse_bgcolor: returning r=%f g=%f b=%f a=%f\n", *r, *g, *b, *a);
+    LOG(3, "DEBUG parse_bgcolor: returning r=%f g=%f b=%f a=%f\n", *r, *g, *b, *a);
 }
 
 
