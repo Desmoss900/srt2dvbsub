@@ -1,0 +1,269 @@
+1
+00:00:02,000 --> 00:00:05,000
+English / English
+Test DVB Subtitle
+
+2
+00:00:06,000 --> 00:00:09,000
+German / Deutsch
+Test DVB-Untertitel
+
+3
+00:00:10,000 --> 00:00:13,000
+French / Français
+Tester le sous-titre DVB
+
+4
+00:00:14,000 --> 00:00:17,000
+Spanish / Español
+Probar subtítulos DVB
+
+5
+00:00:18,000 --> 00:00:21,000
+Italian / Italiano
+Prova sottotitoli DVB
+
+6
+00:00:22,000 --> 00:00:25,000
+Portuguese / Português
+Testar legenda DVB
+
+7
+00:00:26,000 --> 00:00:29,000
+Russian / Русский
+Тест субтитра DVB
+
+8
+00:00:30,000 --> 00:00:33,000
+Japanese / 日本語
+テスト DVB 字幕
+
+9
+00:00:34,000 --> 00:00:37,000
+Chinese / 中文
+测试 DVB 字幕
+
+10
+00:00:38,000 --> 00:00:41,000
+Korean / 한국어
+테스트 DVB 자막
+
+11
+00:00:42,000 --> 00:00:45,000
+Dutch / Nederlands
+Test DVB-ondertitel
+
+12
+00:00:46,000 --> 00:00:49,000
+Swedish / Svenska
+Testa DVB-undertext
+
+13
+00:00:50,000 --> 00:00:53,000
+Danish / Dansk
+Test DVB-undertekst
+
+14
+00:00:54,000 --> 00:00:57,000
+Norwegian / Norsk
+Test DVB-undertekst
+
+15
+00:00:58,000 --> 00:01:01,000
+Finnish / Suomi
+Testaa DVB-tekstitys
+
+16
+00:01:02,000 --> 00:01:05,000
+Polish / Polski
+Test napisów DVB
+
+17
+00:01:06,000 --> 00:01:09,000
+Czech / Čeština
+Test titulků DVB
+
+18
+00:01:10,000 --> 00:01:13,000
+Slovak / Slovenčina
+Test titulkov DVB
+
+19
+00:01:14,000 --> 00:01:17,000
+Slovenian / Slovenščina
+Preizkus podnapisov DVB
+
+20
+00:01:18,000 --> 00:01:21,000
+Croatian / Hrvatski
+Test DVB naslova
+
+21
+00:01:22,000 --> 00:01:25,000
+Romanian / Română
+Test subtitrurilor DVB
+
+22
+00:01:26,000 --> 00:01:29,000
+Bulgarian / Български
+Тест на субтитри DVB
+
+23
+00:01:30,000 --> 00:01:33,000
+Ukrainian / Українська
+Тест субтитрів DVB
+
+24
+00:01:34,000 --> 00:01:37,000
+Belarusian / Беларуская
+Тэст субтытраў DVB
+
+25
+00:01:38,000 --> 00:01:41,000
+Estonian / Eesti
+Testi DVB subtiitreid
+
+26
+00:01:42,000 --> 00:01:45,000
+Latvian / Latviešu
+Testēt DVB parakstus
+
+27
+00:01:46,000 --> 00:01:49,000
+Lithuanian / Lietuvių
+Testuoti DVB titrai
+
+28
+00:01:50,000 --> 00:01:53,000
+Hungarian / Magyar
+Teszt DVB felirat
+
+29
+00:01:54,000 --> 00:01:57,000
+Albanian / Shqip
+Testo nënshkrimin DVB
+
+30
+00:01:58,000 --> 00:02:01,000
+Greek / Ελληνικά
+Δοκιμή υπότιτλου DVB
+
+31
+00:02:02,000 --> 00:02:05,000
+Turkish / Türkçe
+Test DVB Altyazısı
+
+32
+00:02:06,000 --> 00:02:09,000
+Catalan / Català
+Prova de subtítol DVB
+
+33
+00:02:10,000 --> 00:02:13,000
+Basque / Euskara
+Probatu DVB azpititleak
+
+34
+00:02:14,000 --> 00:02:17,000
+Galician / Galego
+Proba de subtítulos DVB
+
+35
+00:02:18,000 --> 00:02:21,000
+Irish / Gaeilge
+Tástáil fotheideal DVB
+
+36
+00:02:22,000 --> 00:02:25,000
+Serbian / Српски
+Тестирај DVB натпис
+
+37
+00:02:26,000 --> 00:02:29,000
+Macedonian / Македонски
+Тест DVB титула
+
+38
+00:02:30,000 --> 00:02:33,000
+Hebrew / עברית
+בדיקת כתוביות DVB
+
+39
+00:02:34,000 --> 00:02:37,000
+Arabic / العربية
+اختبار الترجمة DVB
+
+40
+00:02:38,000 --> 00:02:41,000
+Persian / فارسی
+تست زیرنویس DVB
+
+41
+00:02:42,000 --> 00:02:45,000
+Hindi / हिन्दी
+टेस्ट DVB सबटाइटल
+
+42
+00:02:46,000 --> 00:02:49,000
+Tamil / தமிழ்
+சோதனை DVB உபசரணை
+
+43
+00:02:50,000 --> 00:02:53,000
+Telugu / తెలుగు
+పరీక్ష DVB సబ్‌టైటిల్
+
+44
+00:02:54,000 --> 00:02:57,000
+Punjabi / ਪੰਜਾਬੀ
+ਟੈਸਟ DVB ਸਬਟਾਇਟਲ
+
+45
+00:02:58,000 --> 00:03:01,000
+Urdu / اردو
+ٹیسٹ ڈی وی بی سب ٹائٹل
+
+46
+00:03:02,000 --> 00:03:05,000
+Vietnamese / Tiếng Việt
+Tst DVB phụ đề
+
+47
+00:03:06,000 --> 00:03:09,000
+Thai / ไทย
+ทดสอบคำบรรยาย DVB
+
+48
+00:03:10,000 --> 00:03:13,000
+Khmer / ភាសាខ្មែរ
+សាកល្បង DVB ចំណងជើងរង
+
+49
+00:03:14,000 --> 00:03:17,000
+Lao / ລາວ
+ທົດສອບ DVB ຄຳແປ
+
+50
+00:03:18,000 --> 00:03:21,000
+Mongolian / Монгол
+Тест DVB дэд нэмэлт
+
+51
+00:03:22,000 --> 00:03:25,000
+Indonesian / Bahasa Indonesia
+Tes subtitle DVB
+
+52
+00:03:26,000 --> 00:03:29,000
+Malay / Bahasa Melayu
+Ujian sarikata DVB
+
+53
+00:03:30,000 --> 00:03:33,000
+Sinhala / සිංහල
+පරීක්ෂණ DVB උපසිරසි
+
+54
+00:03:34,000 --> 00:03:37,000
+End of language test
+All languages have been tested
