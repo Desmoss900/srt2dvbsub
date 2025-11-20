@@ -24,8 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -104,7 +104,7 @@ void print_help(void)
 {
     printf("Usage: srt2dvbsub --input in.ts --output out.ts --srt subs.srt[,subs2.srt] --languages eng[,deu] [options]\n\n");
     printf("Options:\n");
-    printf("  -I, --input FILE            Input media file\n");
+    printf("  -I, --input FILE            Input TS file\n");
     printf("  -o, --output FILE           Output TS file\n");
     printf("  -s, --srt FILES             Comma-separated SRT files\n");
     printf("  -l, --languages CODES       Comma-separated 3-letter DVB language codes\n");
@@ -334,8 +334,8 @@ void print_license(void)
     printf("\n");
     printf("To obtain a commercial license, please contact:\n");
     printf("  [Mark E. Rosche | Chili-IPTV Systems]\n");
-    printf("  Email: [license@chili-iptv.info]\n");
-    printf("  Website: [www.chili-iptv.info]\n");
+    printf("  Email: [license@chili-iptv.de]\n");
+    printf("  Website: [www.chili-iptv.de]\n");
     printf("\n");
     printf("────────────────────────────────────────────────────────────────\n");
     printf("DISCLAIMER\n");
@@ -475,6 +475,21 @@ int validate_path_length(const char *path, const char *label)
     return 0;
 }
 
+/*
+ * Removes leading and trailing whitespace from the input string in place.
+ * The function modifies the original string by advancing the pointer past
+ * leading whitespace and replacing trailing whitespace with null terminators.
+ *
+ * Parameters:
+ *   str - Pointer to the string to be trimmed. May be modified.
+ *
+ * Returns:
+ *   Pointer to the trimmed string. If the input is NULL, returns NULL.
+ *
+ * Note:
+ *   The returned pointer may not be the same as the input pointer if leading
+ *   whitespace is present.
+ */
 char* trim_string_inplace(char *str)
 {
     if (!str)

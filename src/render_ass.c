@@ -24,8 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -503,7 +503,7 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
     /* Per-frame small color->palette-index cache to avoid repeated
      * nearest_palette_index() work when many tiles share colors.
      */
-    const int MAX_COLOR_CACHE = 128;
+#define MAX_COLOR_CACHE 128
     struct { uint32_t rgba; int palidx; } color_cache[MAX_COLOR_CACHE];
     int color_cache_len = 0;
     int color_cache_evict = 0;
@@ -677,6 +677,7 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
         }
     }
 
+#undef MAX_COLOR_CACHE
     return bm;
 }
 

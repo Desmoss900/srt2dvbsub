@@ -24,8 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -108,6 +108,15 @@ int utf8_display_width(const char *s);
  * @return     0 on success, non-zero on failure (e.g., memory allocation error).
  */
 int replace_strdup(const char **dest, const char *src);
+
+/**
+ * Replaces the string pointed to by `*dest` with a duplicate of `src`.
+ * Frees the memory previously pointed to by `*dest` if necessary.
+ *
+ * @param dest Pointer to the destination string pointer. The memory pointed to by `*dest` will be freed and replaced.
+ * @param src  Source string to duplicate and assign to `*dest`.
+ * @return     0 on success, non-zero on failure (e.g., memory allocation error).
+ */
 int replace_strdup_owned(const char **dest, const char *src);
 
 /**
@@ -122,6 +131,16 @@ int replace_strdup_owned(const char **dest, const char *src);
  */
 void handle_signal(int sig, volatile sig_atomic_t *stop_requested);
 
+/**
+ * @brief Validates the length of a given file path.
+ *
+ * This function checks whether the provided path string meets the required length constraints.
+ * It can be used to ensure that file paths do not exceed system or application limits.
+ *
+ * @param path The file path to validate.
+ * @param label A descriptive label for the path, used in error messages.
+ * @return Returns 0 if the path length is valid, or a non-zero error code if invalid.
+ */
 int validate_path_length(const char *path, const char *label);
 
 /**

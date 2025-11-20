@@ -25,8 +25,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER

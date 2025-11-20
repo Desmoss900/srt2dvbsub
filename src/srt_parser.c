@@ -24,8 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -994,14 +994,14 @@ static int parse_srt_internal(const char *filename, SRTEntry **entries_out, FILE
         (*entries_out)[n].end_ms   = end;
         (*entries_out)[n].text     = norm;
 
-        /* Force at least 50ms gap between adjacent cues */
-        if (n > 0 && (*entries_out)[n].start_ms <= (*entries_out)[n-1].end_ms) {
-            (*entries_out)[n-1].end_ms = (*entries_out)[n].start_ms - 50;
-            if ((*entries_out)[n-1].end_ms < (*entries_out)[n-1].start_ms) {
-                /* never allow negative duration */
-                (*entries_out)[n-1].end_ms = (*entries_out)[n-1].start_ms + 1;
+        /* Correct overlaps (gap < 0), but allow zero gap (touching subtitles) */
+        /* Keep current cue's end time fixed, adjust next cue's start time */
+        if (n > 0 && (*entries_out)[n].start_ms < (*entries_out)[n-1].end_ms) {
+            (*entries_out)[n].start_ms = (*entries_out)[n-1].end_ms;
+            if ((*entries_out)[n].start_ms > (*entries_out)[n].end_ms) {
+                /* never allow negative duration on current cue */
+                (*entries_out)[n].end_ms = (*entries_out)[n].start_ms + 1;
             }
-            (*entries_out)[n].start_ms = (*entries_out)[n-1].end_ms + 50;
 
                 if (debug_level > 0) {
                 sp_log(1,
@@ -1280,13 +1280,13 @@ int parse_srt_with_stats(const char *filename, SRTEntry **entries_out, FILE *qc,
         (*entries_out)[n].end_ms   = end;
         (*entries_out)[n].text     = norm;
 
-        /* Force 50ms gap between cues */
-        if (n > 0 && (*entries_out)[n].start_ms <= (*entries_out)[n-1].end_ms) {
-            (*entries_out)[n-1].end_ms = (*entries_out)[n].start_ms - 50;
-            if ((*entries_out)[n-1].end_ms < (*entries_out)[n-1].start_ms) {
-                (*entries_out)[n-1].end_ms = (*entries_out)[n-1].start_ms + 1;
+        /* Correct overlaps (gap < 0), but allow zero gap (touching subtitles) */
+        /* Keep current cue's end time fixed, adjust next cue's start time */
+        if (n > 0 && (*entries_out)[n].start_ms < (*entries_out)[n-1].end_ms) {
+            (*entries_out)[n].start_ms = (*entries_out)[n-1].end_ms;
+            if ((*entries_out)[n].start_ms > (*entries_out)[n].end_ms) {
+                (*entries_out)[n].end_ms = (*entries_out)[n].start_ms + 1;
             }
-            (*entries_out)[n].start_ms = (*entries_out)[n-1].end_ms + 50;
             if (stats_out) stats_out->overlaps_corrected++;
             if (debug_level > 0) {
                 sp_log(1,
@@ -1491,7 +1491,7 @@ void srt_report_stats(const SRTParserStats *stats, FILE *out) {
     if (stats->total_cues == 0) return;
     
     fprintf(out, "\n=== SRT Parser Statistics ===\n");
-    fprintf(out, "Total cues encountered:        %d\n", stats->total_cues);
+    fprintf(out, "Total cues encountered:       %d\n", stats->total_cues);
     fprintf(out, "Valid cues stored:            %d\n", stats->valid_cues);
     fprintf(out, "Skipped/malformed cues:       %d\n", stats->skipped_cues);
     fprintf(out, "\n=== Corrections Applied ===\n");

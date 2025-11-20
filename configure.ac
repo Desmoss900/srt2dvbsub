@@ -1,4 +1,4 @@
-AC_INIT([srt2dvbsub], [0.0.1], [bugs@chili-iptv.info])
+AC_INIT([srt2dvbsub], [0.0.1], [bugs@chili-iptv.de])
 
 # Default to disabling Automake dependency-tracking unless explicitly enabled.
 # This makes the common developer/workflow faster (no per-file dep-tracking)
@@ -11,6 +11,17 @@ fi
 
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AC_PROG_CC
+
+# Platform-specific compiler flags
+case "$host_os" in
+  darwin*)
+    # macOS: suppress clang warnings about ATOMIC_VAR_INIT deprecation and VLA folding
+    CFLAGS="${CFLAGS} -Wno-deprecated-pragma -Wno-gnu-folding-constant"
+    ;;
+  *)
+    # Other platforms: add general warning suppressions if needed
+    ;;
+esac
 
 # Ensure pkg-config is available
 PKG_PROG_PKG_CONFIG

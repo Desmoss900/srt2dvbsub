@@ -24,8 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -626,10 +626,18 @@ static int cli_parse(int argc, char **argv,
         }
     }
 
-    if (!*input || !*output || !*srt_list || !*lang_list)
-    {
-        print_usage();
-        return 1;
+    /* In QC-only mode, input/output files are not needed; only SRT and languages */
+    if (*qc_only) {
+        if (!*srt_list || !*lang_list) {
+            print_usage();
+            return 1;
+        }
+    } else {
+        /* Normal encoding mode requires all four: input, output, srt_list, lang_list */
+        if (!*input || !*output || !*srt_list || !*lang_list) {
+            print_usage();
+            return 1;
+        }
     }
 
     /* Validate language list with detailed error reporting */
@@ -2021,12 +2029,12 @@ static void ctx_cleanup(struct MainCtx *ctx)
         if (pango && gobj) {
             void *(*pango_font_map_get_default_f)(void) = dlsym(pango, "pango_font_map_get_default");
             void (*g_object_unref_f)(void *) = dlsym(gobj, "g_object_unref");
-            if (pango_font_map_get_default_f && g_object_unref_f) {
+            if (pango_font_map_get_default_f && dbg_object_unref_f) {
                 void *map = pango_font_map_get_default_f();
                 if (map) {
                     if (ctx->debug_level > 1)
                         LOG(2, "unref() pango default font map\n");
-                    g_object_unref_f(map);
+                    dbg_object_unref_f(map);
                 }
             }
         }
@@ -2271,12 +2279,14 @@ int main(int argc, char **argv)
     ctx.cli_font = resolved_font;
     ctx.cli_font_style = resolved_style;
     
-    /* Output encoding status with font information */
-    printf("Encoding the subtitles with font: %s", resolved_font);
-    if (resolved_style) {
-        printf(" and style: %s\n\n", resolved_style);
-    } else {
-        printf(" and style: (default)\n\n");
+    /* Output encoding status with font information (suppress in QC-only mode) */
+    if (!qc_only) {
+        printf("Encoding the subtitles with font: %s", resolved_font);
+        if (resolved_style) {
+            printf(" and style: %s\n\n", resolved_style);
+        } else {
+            printf(" and style: (default)\n\n");
+        }
     }
 
     /*

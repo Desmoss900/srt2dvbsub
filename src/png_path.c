@@ -24,8 +24,8 @@
 *
 * To obtain a commercial license, please contact:
 *   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.info]  
-*   Website: [www.chili-iptv.info]
+*   Email: [license@chili-iptv.de]  
+*   Website: [www.chili-iptv.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -60,7 +60,7 @@
 /**
  * Static module state: configured PNG output directory
  */
-static char g_png_output_dir[PATH_MAX] = "pngs/";
+static char dbg_png_output_dir[PATH_MAX] = "pngs/";
 
 /**
  * Helper: Check if directory exists and is writable
@@ -201,7 +201,7 @@ int init_png_path(const char *custom_path, char *errmsg)
  */
 const char *get_png_output_dir(void)
 {
-    return g_png_output_dir;
+    return dbg_png_output_dir;
 }
 
 /**
