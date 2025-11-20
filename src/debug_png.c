@@ -47,7 +47,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "debug_png.h"
-#include <cairo/cairo.h>
+#include <cairo.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>

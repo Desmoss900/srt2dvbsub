@@ -261,12 +261,48 @@ after_table:
 /*
  * Prints the build version information to standard output.
  *
- * This function outputs the build version, commit hash, and build date
- * using the predefined macros GIT_VERSION, GIT_COMMIT, and GIT_DATE.
+ * This function outputs the build version, commit hash, build date,
+ * CPU architecture, and operating system using predefined macros and compiler detection.
  */
 void print_version(void)
 {
-    printf("\nsrt2dvbsub Version: %s (%s, %s)\n\n", GIT_VERSION, GIT_COMMIT, GIT_DATE);
+    /* Detect operating system using compiler-defined macros */
+    const char *os = "unknown";
+    
+    #if defined(__linux__)
+        os = "linux";
+    #elif defined(__APPLE__) && defined(__MACH__)
+        os = "darwin";
+    #elif defined(__FreeBSD__)
+        os = "FreeBSD";
+    #elif defined(__OpenBSD__)
+        os = "OpenBSD";
+    #elif defined(__NetBSD__)
+        os = "NetBSD";
+    #endif
+    
+    /* Detect CPU architecture using compiler-defined macros */
+    const char *arch = "unknown";
+    
+    #if defined(__x86_64__) || defined(__amd64__) || defined(_M_X64)
+        arch = "x86_64";
+    #elif defined(__i386__) || defined(__i486__) || defined(__i586__) || defined(__i686__) || defined(_M_IX86)
+        arch = "i386";
+    #elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+        arch = "aarch64";
+    #elif defined(__arm__) || defined(__thumb__) || defined(_M_ARM)
+        arch = "arm";
+    #elif defined(__ppc64__) || defined(__PPC64__) || defined(_M_PPC64)
+        arch = "ppc64";
+    #elif defined(__ppc__) || defined(__PPC__) || defined(_M_PPC)
+        arch = "ppc";
+    #elif defined(__mips__) || defined(__mips64__)
+        arch = "mips";
+    #elif defined(__riscv)
+        arch = "riscv";
+    #endif
+    
+    printf("\nsrt2dvbsub Version: %s (%s, %s) [%s-%s]\n\n", GIT_VERSION, GIT_COMMIT, GIT_DATE, os, arch);
 }
 
 /*

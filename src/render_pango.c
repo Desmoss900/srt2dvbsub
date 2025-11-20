@@ -49,7 +49,7 @@
 #include "render_pango.h"
 #include "palette.h"
 #include "debug.h"
-#include <cairo/cairo.h>
+#include <cairo.h>
 #include <pango/pangocairo.h>
 #include <stdlib.h>
 #include <string.h>
