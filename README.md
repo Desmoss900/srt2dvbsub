@@ -2,7 +2,7 @@
 
 **Convert SRT Subtitles to DVB Subtitles in MPEG-TS**
 
-srt2dvbsub is a professional command-line tool that converts SRT (SubRip) subtitle files into DVB (Digital Video Broadcasting) subtitle tracks and multiplexes them directly into MPEG-TS (Transport Stream) files.
+srt2dvbsub is an attempt at a professional command-line tool that converts SRT (SubRip) subtitle files into DVB (Digital Video Broadcasting) subtitle tracks and multiplexes them directly into MPEG-TS (Transport Stream) files.
 
 ## Overview
 
@@ -10,12 +10,12 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 
 **Key Features:**
 -  SRT to DVB subtitle conversion
--  Multi-track subtitle support (up to 255 simultaneous tracks)
+-  Multi-track subtitle support (up to 16 simultaneous tracks)
 -  Professional text-to-bitmap rendering (Pango/Cairo)
 -  Direct MPEG-TS multiplexing
 -  Multi-threaded rendering for high performance
--  ASS/SSA format support (optional)
--  Quality control (QC) verification mode
+-  ASS/SSA tag support and rendering (optional)
+-  SRT Quality control (QC) verification mode
 -  Full rendering control (fonts, colors, sizing)
 -  Per-track language codes and flags (forced, hearing-impaired)
 
@@ -71,23 +71,23 @@ srt2dvbsub \
 srt2dvbsub --qc-only --srt subtitles.srt --languages eng
 ```
 
-## Key Features
+## Key Features (Extended)
 
 ### Subtitle Conversion
 -  SRT (SubRip) parsing with robustness enhancements
--  ASS/SSA tag support (with `--ass` flag)
+-  ASS/SSA tag and rendering support (with `--ass` flag)
 -  Multi-track processing with independent settings
 -  Per-track language codes (DVB 3-letter ISO codes)
 -  Per-track forced and hearing-impaired flags
 
 ### Text Rendering
--  Professional rendering via Pango/Cairo
+-  Professional rendering via Pango/Cairo (or libass)
 -  Configurable fonts, styles, and sizes
 -  Dynamic font sizing based on video resolution
 -  Custom colors: foreground, outline, shadow, background
 -  Supersample anti-aliasing (SSAA) with configurable factors
 
-### DVB Generation
+### DVB Subtitle Generation
 -  MPEG-TS multiplexing with original streams preserved
 -  DVB Page Composition Segment generation
 -  Palette modes: EBU broadcast, broadcast, greyscale
@@ -122,7 +122,7 @@ srt2dvbsub --help
 --fgcolor #RRGGBB         Text color (default: white #ffffff)
 --outlinecolor #RRGGBB    Outline color (default: gray)
 --shadowcolor #AARRGGBB   Shadow color with optional alpha
---bg-color #RRGGBB        Background color (optional)
+--bg-color #RRGGBB        Background color (optional - default: transparent)
 ```
 
 ### DVB Options
@@ -170,9 +170,9 @@ Typical performance on 8-core system:
 
 | Scenario | Single-threaded | Multi-threaded (4 threads) |
 |----------|-----------------|----------------------------|
-| Single track, 1080p | >~2x realtime | >~1.5x realtime |
-| 3 language tracks, 1080p | >~6x realtime | >~2x realtime |
-| 4K content | >~8-10x realtime | >~3-4x realtime |
+| Single track, 1080p | >~4x realtime | >~6x realtime |
+| 3 language tracks, 1080p | >~4x realtime | >~6x realtime |
+| 4K content | >~2x realtime | >~3x realtime |
 
 ## System Requirements
 
@@ -236,8 +236,7 @@ srt2dvbsub \
   --render-threads 8 \
   --enc-threads 8 \
   --ssaa 2 \
-  --no-unsharp \
-  --bench
+  --no-unsharp 
 ```
 
 ### Hearing-Impaired & Forced Subtitles
