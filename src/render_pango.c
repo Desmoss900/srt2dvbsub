@@ -124,7 +124,7 @@ static pthread_once_t pango_fontmap_key_once = PTHREAD_ONCE_INIT;
  */
 static void pango_fontmap_destructor(void *v) {
     if (!v) return;
-    dbg_object_unref((GObject*)v);
+    g_object_unref((GObject*)v);
 }
 
 /* Create the pthread key for storing a PangoFontMap per-thread. This is
@@ -162,7 +162,7 @@ static PangoFontMap *get_thread_pango_fontmap(void) {
             /* Failed to store fm in thread-specific storage — clean up and
              * return NULL to indicate we couldn't establish a thread fontmap. */
             fprintf(stderr, "render_pango: pthread_setspecific failed: %d\n", rc);
-            dbg_object_unref((GObject*)fm);
+            g_object_unref((GObject*)fm);
             return NULL;
         }
     }
@@ -181,7 +181,7 @@ void render_pango_cleanup(void) {
     PangoFontMap *fm = (PangoFontMap *)pthread_getspecific(pango_fontmap_key);
     if (fm) {
         pthread_setspecific(pango_fontmap_key, NULL);
-        dbg_object_unref((GObject*)fm);
+        g_object_unref((GObject*)fm);
     }
 }
 
@@ -222,8 +222,8 @@ static void *safe_malloc_count(size_t nitems, size_t itemsize) {
  * atomic so they can be safely modified/read from multiple threads. */
 static atomic_int dbg_ssaa_override = 0; /* >0 forces a specific supersample factor */
 static atomic_int dbg_no_unsharp = 0;    /* disable unsharp sharpening when non-zero */
-void render_pango_set_ssaa_override(int ssaa) { atomic_store(&g_ssaa_override, ssaa); }
-void render_pango_set_no_unsharp(int no) { atomic_store(&g_no_unsharp, no); }
+void render_pango_set_ssaa_override(int ssaa) { atomic_store(&dbg_ssaa_override, ssaa); }
+void render_pango_set_no_unsharp(int no) { atomic_store(&dbg_no_unsharp, no); }
 
 /* Palette presets */
 /*
@@ -781,7 +781,7 @@ Bitmap render_text_pango(const char *markup,
     } else {
     ss = 4; /* very large displays: cap at 4x */
     }
-    if (atomic_load(&g_ssaa_override) > 0) ss = atomic_load(&g_ssaa_override);
+    if (atomic_load(&dbg_ssaa_override) > 0) ss = atomic_load(&dbg_ssaa_override);
     /* pad to accommodate strokes when upscaled; scale with fontsize so
      * UHD/large text get enough room and strokes don't clip. */
     int pad = 8;
@@ -1109,7 +1109,7 @@ Bitmap render_text_pango(const char *markup,
      * We use a small 3x3 box blur to get a blurred version, then add
      * amount*(orig - blur) back to the original. Operates on premultiplied
      * ARGB channels (This is acceptable for a small amount). */
-    if (!atomic_load(&g_no_unsharp))
+    if (!atomic_load(&dbg_no_unsharp))
     {
         /* Reduce unsharp amount for higher SSAA: when supersampling is strong
          * we need much less sharpening (or almost none) to avoid reintroducing
@@ -1808,12 +1808,12 @@ final_cleanup:
 
     /* Cleanup Pango/Cairo resources (guarded) */
     if (desc) pango_font_description_free(desc);
-    if (layout_dummy) dbg_object_unref(layout_dummy);
-    if (ctx_dummy) dbg_object_unref(ctx_dummy);
+    if (layout_dummy) g_object_unref(layout_dummy);
+    if (ctx_dummy) g_object_unref(ctx_dummy);
     if (cr_dummy) cairo_destroy(cr_dummy);
     if (dummy) cairo_surface_destroy(dummy);
-    if (layout_real) dbg_object_unref(layout_real);
-    if (ctx_real) dbg_object_unref(ctx_real);
+    if (layout_real) g_object_unref(layout_real);
+    if (ctx_real) g_object_unref(ctx_real);
     if (cr) cairo_destroy(cr);
     if (surface_ss) cairo_surface_destroy(surface_ss);
     if (surface) cairo_surface_destroy(surface);
@@ -1899,16 +1899,16 @@ int font_exists(const char *font_name) {
     
     PangoFontDescription *desc = pango_font_description_from_string(font_name);
     if (!desc) {
-        dbg_object_unref(ctx);
+        g_object_unref(ctx);
         return 0;
     }
     
     PangoFont *font = pango_context_load_font(ctx, desc);
     int exists = (font != NULL) ? 1 : 0;
     
-    if (font) dbg_object_unref(font);
+    if (font) g_object_unref(font);
     pango_font_description_free(desc);
-    dbg_object_unref(ctx);
+    g_object_unref(ctx);
     
     return exists;
 }

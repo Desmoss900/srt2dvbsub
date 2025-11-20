@@ -2029,12 +2029,12 @@ static void ctx_cleanup(struct MainCtx *ctx)
         if (pango && gobj) {
             void *(*pango_font_map_get_default_f)(void) = dlsym(pango, "pango_font_map_get_default");
             void (*g_object_unref_f)(void *) = dlsym(gobj, "g_object_unref");
-            if (pango_font_map_get_default_f && dbg_object_unref_f) {
+            if (pango_font_map_get_default_f && g_object_unref_f) {
                 void *map = pango_font_map_get_default_f();
                 if (map) {
                     if (ctx->debug_level > 1)
                         LOG(2, "unref() pango default font map\n");
-                    dbg_object_unref_f(map);
+                    g_object_unref_f(map);
                 }
             }
         }

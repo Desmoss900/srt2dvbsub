@@ -149,11 +149,11 @@ int init_png_path(const char *custom_path, char *errmsg)
     /* Try to initialize with requested path */
     if (ensure_directory(target_path, tmp_errmsg) == 0) {
         /* Success: use requested path */
-        if (strlen(target_path) >= sizeof(g_png_output_dir)) {
-            snprintf(errmsg, 256, "PNG path too long (max %zu)", sizeof(g_png_output_dir) - 1);
+        if (strlen(target_path) >= sizeof(dbg_png_output_dir)) {
+            snprintf(errmsg, 256, "PNG path too long (max %zu)", sizeof(dbg_png_output_dir) - 1);
             return -1;
         }
-        strcpy(g_png_output_dir, target_path);
+        strcpy(dbg_png_output_dir, target_path);
         return 0;
     }
     
@@ -166,7 +166,7 @@ int init_png_path(const char *custom_path, char *errmsg)
             /* Use format specifier %.50s to guarantee max 50 chars per path in error message */
             snprintf(errmsg, 256, "PNG path %.50s failed, falling back to %.50s", 
                      target_path, fallback_path);
-            strcpy(g_png_output_dir, fallback_path);
+            strcpy(dbg_png_output_dir, fallback_path);
             return 0;  /* Fallback succeeded */
         }
         
@@ -185,7 +185,7 @@ int init_png_path(const char *custom_path, char *errmsg)
     if (ensure_directory(fallback_path, errmsg) != 0) {
         /* Use format specifier %.50s to guarantee max 50 chars */
         snprintf(errmsg, 256, "Default PNG path failed, using fallback %.50s", fallback_path);
-        strcpy(g_png_output_dir, fallback_path);
+        strcpy(dbg_png_output_dir, fallback_path);
         return 0;
     }
     
@@ -252,7 +252,7 @@ void cleanup_png_path(void)
 {
     /* Currently no dynamic allocations; module uses static storage */
     /* Reset to default for next initialization */
-    strcpy(g_png_output_dir, "pngs/");
+    strcpy(dbg_png_output_dir, "pngs/");
 }
 
 /**
