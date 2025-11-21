@@ -54,8 +54,8 @@ dvdbr2dvbsub_SOURCES = \
     src/utils.c \
     src/progress.c
 
-dvdbr2dvbsub_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)
-dvdbr2dvbsub_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) -lm
+dvdbr2dvbsub_CFLAGS = $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)
+dvdbr2dvbsub_LDADD  = $(DEPS_LIBS) $(FFMPEG_LIBS) $(LIBASS_LIBS) -lm
 
 # Convenience build modes: debug (with symbols, no -Werror) and release
 # (optimized and stripped). These are helper targets that invoke a
@@ -75,13 +75,13 @@ debug:
 	@echo "Building debug binaries..."
 	$(MAKE) srt2dvbsub dvdbr2dvbsub \
 		srt2dvbsub_CFLAGS="$(DEBUG_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)" \
-		dvdbr2dvbsub_CFLAGS="$(DEBUG_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)"
+		dvdbr2dvbsub_CFLAGS="$(DEBUG_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)"
 
 release:
 	@echo "Building release binaries (optimized + stripped)..."
 	$(MAKE) srt2dvbsub dvdbr2dvbsub \
 		srt2dvbsub_CFLAGS="$(RELEASE_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)" \
-		dvdbr2dvbsub_CFLAGS="$(RELEASE_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)"
+		dvdbr2dvbsub_CFLAGS="$(RELEASE_CFLAGS) $(DEPS_CFLAGS) $(FFMPEG_CFLAGS) $(LIBASS_CFLAGS) $(THREAD_SAFE_MUX_CPPFLAGS)"
 	@echo "Stripping binaries in build directory..."
 	@$(SHELL) -c '\
 for prog in srt2dvbsub dvdbr2dvbsub; do \

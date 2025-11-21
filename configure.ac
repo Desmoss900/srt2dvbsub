@@ -117,6 +117,23 @@ AC_ARG_ENABLE([ass],
 
 if test "x$enable_ass" = "xyes" ; then
   PKG_CHECK_MODULES([LIBASS], [libass >= 0.17.1], [], [AC_MSG_ERROR([libass requested via --enable-ass but not found or too old (need >= 0.17.1)])])
+  
+  # Ensure libass include path is in CFLAGS (libass headers are in ass/ subdirectory)
+  # Extract base include path from pkg-config and add it explicitly
+  for flag in $LIBASS_CFLAGS; do
+    case "$flag" in
+      -I*)
+        base_include="${flag#-I}"
+        if test -d "$base_include/ass"; then
+          # ass subdirectory exists, make sure it's in the include path
+          if ! echo "$LIBASS_CFLAGS" | grep -q "\-I$base_include/ass"; then
+            LIBASS_CFLAGS="$LIBASS_CFLAGS -I$base_include/ass"
+          fi
+        fi
+        ;;
+    esac
+  done
+  
   AC_DEFINE([HAVE_LIBASS], [1], [Define if libass is available])
 else
   # Ensure variables exist even when libass not requested/available
