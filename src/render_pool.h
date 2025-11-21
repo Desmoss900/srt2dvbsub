@@ -156,6 +156,7 @@ Bitmap render_pool_render_sync(const char *markup,
                                const char *fontstyle,
                                const char *fgcolor, const char *outlinecolor,
                                const char *shadowcolor, const char *bgcolor, int align_code,
+                               double sub_position_pct,
                                const char *palette_mode);
 
 /*
@@ -167,7 +168,8 @@ int render_pool_submit_async(int track_id, int cue_index,
                             const char *markup, int disp_w, int disp_h, int fontsize,
                             const char *fontfam, const char *fontstyle,
                             const char *fgcolor, const char *outlinecolor,
-                            const char *shadowcolor, const char *bgcolor, int align_code, const char *palette_mode);
+                            const char *shadowcolor, const char *bgcolor, int align_code, 
+                            double sub_position_pct, const char *palette_mode);
 
 /*
  * Try to retrieve a completed job for the given (track_id, cue_index).

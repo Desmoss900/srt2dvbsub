@@ -572,6 +572,7 @@ Bitmap render_text_pango(const char *markup,
                           const char *shadowcolor,
                           const char *bgcolor,
                           int align_code,
+                          double sub_position_pct,
                           const char *palette_mode) {
     Bitmap bm={0};
     
@@ -709,15 +710,27 @@ Bitmap render_text_pango(const char *markup,
 
     pango_layout_get_pixel_size(layout_dummy, &lw, &lh);
     
+    /* Platform-specific line height adjustment
+     * macOS Pango/Cairo font metrics differ from Linux, resulting in different line heights.
+     * Apply a correction factor to normalize rendering across platforms. */
+    #ifdef __APPLE__
+        /* macOS tends to report larger line heights; scale down slightly for consistency */
+        lh = (int)(lh * 0.95);
+    #endif
+    
     /* For centered text, create a layout with width matching the actual text width
      * so center alignment works properly without extra padding on the sides */
     int layout_width_for_real = lw;
 
     /* --- Placement in full frame --- */
-    /* Position so bottom of text is 3% from bottom of frame */
+    /* Convert percentage to decimal (e.g., 3.8% -> 0.038)
+     * This represents gap from bottom: higher value = gap is larger = text moves UP */
+    double pos_decimal = sub_position_pct / 100.0;
+    LOG(1, "POSITION_DEBUG: sub_position_pct=%.1f, pos_decimal=%.4f, disp_h=%d\n", sub_position_pct, pos_decimal, disp_h);
     int text_x = (disp_w - lw) / 2;
-    int text_y = disp_h - (int)(disp_h * 0.038) - lh;
-    if (align_code >= 7) text_y = (int)(disp_h * 0.038);
+    int text_y = disp_h - (int)(disp_h * pos_decimal) - lh;
+    LOG(1, "POSITION_DEBUG: calculated text_y=%d, lh=%d, final_y will be: %d\n", text_y, lh, text_y);
+    if (align_code >= 7) text_y = (int)(disp_h * pos_decimal);
     else if (align_code >= 4 && align_code <= 6) text_y = (disp_h - lh) / 2;
 
     /* --- Adaptive supersampled rendering surface ---
@@ -806,7 +819,7 @@ Bitmap render_text_pango(const char *markup,
     cairo_save(cr);
     /* Make stroke width proportional to fontsize, but scale it down slightly
      * for higher SSAA so strokes don't appear overly thick after downsampling. */
-    double stroke_w = 0.9 + (fontsize * 0.045);
+    double stroke_w = 0.4 + (fontsize * 0.018);
     /* For very large displays we thin the stroke a bit when SSAA is high
      * to avoid overly chunky outlines after downsampling. For SD we keep
      * the stroke thicker to prevent small glyph features from being eaten. */

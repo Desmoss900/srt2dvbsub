@@ -109,6 +109,7 @@ Bitmap render_text_pango(const char *markup,
                          const char *shadowcolor,
                          const char *bgcolor,
                          int align_code,
+                         double sub_position_pct,
                          const char *palette_mode);
 
 /**

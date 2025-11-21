@@ -51,7 +51,7 @@ srt2dvbsub \
 ### Custom Rendering
 
 ```bash
-# Custom font, colors, and anti-aliasing
+# Custom font, colors, anti-aliasing, and positioning
 srt2dvbsub \
   --input video.ts \
   --output video_styled.ts \
@@ -61,6 +61,7 @@ srt2dvbsub \
   --fontsize 40 \
   --fgcolor "#ffffff" \
   --outlinecolor "#000000" \
+  --sub-position 5.5 \
   --ssaa 4
 ```
 
@@ -84,6 +85,7 @@ srt2dvbsub --qc-only --srt subtitles.srt --languages eng
 -  Professional rendering via Pango/Cairo (or libass)
 -  Configurable fonts, styles, and sizes
 -  Dynamic font sizing based on video resolution
+-  Custom vertical positioning (adjustable from bottom of screen)
 -  Custom colors: foreground, outline, shadow, background
 -  Supersample anti-aliasing (SSAA) with configurable factors
 
@@ -123,6 +125,7 @@ srt2dvbsub --help
 --outlinecolor #RRGGBB    Outline color (default: gray)
 --shadowcolor #AARRGGBB   Shadow color with optional alpha
 --bg-color #RRGGBB        Background color (optional - default: transparent)
+--sub-position PERCENT    Vertical position from bottom (0.0-50.0%, default: 5.0%)
 ```
 
 ### DVB Options

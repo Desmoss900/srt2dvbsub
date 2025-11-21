@@ -176,6 +176,7 @@ typedef struct RenderJob {
     char *fontstyle;
     char *fgcolor, *outlinecolor, *shadowcolor, *bgcolor;
     int align_code;
+    double sub_position_pct;
     char *palette_mode;
     Bitmap result;
     atomic_int done;
@@ -355,7 +356,7 @@ static void *worker_thread(void *arg) {
                                       job->fontstyle,
                                       job->fgcolor, job->outlinecolor, job->shadowcolor,
                                       job->bgcolor,
-                                      job->align_code, job->palette_mode);
+                                      job->align_code, job->sub_position_pct, job->palette_mode);
         if (bench.enabled && render_start)
         {
             bench_add_render_us(bench_now() - render_start);
@@ -495,13 +496,14 @@ Bitmap render_pool_render_sync(const char *markup,
                                 const char *fontstyle,
                                 const char *fgcolor, const char *outlinecolor,
                                 const char *shadowcolor, const char *bgcolor, int align_code,
+                                double sub_position_pct,
                                 const char *palette_mode)
 {
     Bitmap empty = {0};
     /* If the pool isn't active, just call the renderer synchronously to
      * keep callers working without a pool. */
     if (!atomic_load(&pool_active)) {
-        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, bgcolor, align_code, palette_mode);
+        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, bgcolor, align_code, sub_position_pct, palette_mode);
     }
 
     /* Build a transient job structure which we will wait on. We don't add
@@ -522,6 +524,7 @@ Bitmap render_pool_render_sync(const char *markup,
     job->disp_h = disp_h;
     job->fontsize = fontsize;
     job->align_code = align_code;
+    job->sub_position_pct = sub_position_pct;
     atomic_store(&job->done, 0);
     job->done_cond_init = 0;
     job->done_mtx_init = 0;
@@ -575,6 +578,7 @@ int render_pool_submit_async(int track_id, int cue_index,
                              const char *fontstyle,
                              const char *fgcolor, const char *outlinecolor,
                              const char *shadowcolor, const char *bgcolor, int align_code,
+                             double sub_position_pct,
                              const char *palette_mode)
 {
     /* If no pool exists, fail fast to let callers fall back if desired. */
@@ -608,6 +612,7 @@ int render_pool_submit_async(int track_id, int cue_index,
     job->disp_h = disp_h;
     job->fontsize = fontsize;
     job->align_code = align_code;
+    job->sub_position_pct = sub_position_pct;
     atomic_store(&job->done, 0);
     job->done_cond_init = 0;
     job->done_mtx_init = 0;

@@ -253,6 +253,19 @@ Primary use cases:
         - #404040 = dark gray background
       • Background fills entire subtitle text bounding box with equal padding
 
+  --sub-position PERCENT
+      Vertical position of subtitles from bottom of screen (default: 5.0%)
+      • Format: floating-point percentage (0.0 to 50.0)
+      • Range: 0.0% (bottom of screen) to 50.0% (middle of screen)
+      • Default: 5.0% (subtitles near bottom of screen)
+      • Examples:
+        - "--sub-position 5.0" = standard TV position (default)
+        - "--sub-position 5.5" = slightly higher than standard
+        - "--sub-position 50.0" = half-way up screen
+        - "--sub-position 1.0" = very close to bottom
+      • Higher values = larger gap from bottom = text positioned higher on screen
+      • Useful for avoiding overlaps with on-screen graphics or logos
+
 
 5.3 DVB Subtitle Options
   --palette MODE

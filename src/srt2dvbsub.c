@@ -269,6 +269,36 @@ static int finalize_main(struct MainCtx *ctx, bool ctx_cleaned, int ret)
  *       It also validates that required options are provided and that language codes
  *       conform to the DVB 3-letter standard.
  */
+
+/**
+ * Validate and parse subtitle position percentage.
+ *
+ * @param pos_str Input string (e.g., "3.8")
+ * @param out_pct Pointer to store validated percentage
+ * @return 0 on success, -1 on validation error
+ */
+static int validate_sub_position(const char *pos_str, double *out_pct)
+{
+    if (!pos_str || !out_pct) return -1;
+    
+    char *endptr;
+    errno = 0;
+    double value = strtod(pos_str, &endptr);
+    
+    /* Check for conversion errors */
+    if (errno != 0 || endptr == pos_str || *endptr != '\0') {
+        return -1;
+    }
+    
+    /* Validate range: 0.0 to 50.0 percent */
+    if (value < 0.0 || value > 50.0) {
+        return -1;
+    }
+    
+    *out_pct = value;
+    return 0;
+}
+
 static int cli_parse(int argc, char **argv,
                           struct MainCtx *ctx,
                           const char **input,
@@ -283,6 +313,7 @@ static int cli_parse(int argc, char **argv,
                           int *subtitle_delay_ms,
                           char **subtitle_delay_list,
                           int *cli_fontsize,
+                          double *sub_position_pct,
                           const char **cli_font,
                           const char **cli_font_style,
                           const char **cli_fgcolor,
@@ -311,6 +342,7 @@ static int cli_parse(int argc, char **argv,
         {"list-fonts", no_argument, 0, 1019},
         {"font", required_argument, 0, 1007},
         {"fontsize", required_argument, 0, 1008},
+        {"sub-position", required_argument, 0, 1022},
         {"fgcolor", required_argument, 0, 1009},
         {"outlinecolor", required_argument, 0, 1010},
         {"shadowcolor", required_argument, 0, 1011},
@@ -438,6 +470,14 @@ static int cli_parse(int argc, char **argv,
                 if (ret != 0) {
                     LOG(0, "Font size validation error: %s\n", fontsize_err);
                     LOG(0, "Valid range: %s\n", get_fontsize_usage());
+                    return 1;
+                }
+            }
+            break;
+        case 1022:
+            {
+                if (validate_sub_position(optarg, sub_position_pct) != 0) {
+                    LOG(0, "Subtitle position validation error: must be a number between 0.0 and 50.0\n");
                     return 1;
                 }
             }
@@ -1237,7 +1277,7 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
  */
 static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntracks,
                          int video_w, int video_h, int use_ass,
-                         int cli_fontsize, int64_t input_start_pts90)
+                         int cli_fontsize, double sub_position_pct, int64_t input_start_pts90)
 {
     AVFormatContext *in_fmt = ctx->in_fmt;
     AVFormatContext *out_fmt = ctx->out_fmt;
@@ -1388,6 +1428,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                          cli_font_style,
                                                          cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                          used_align,
+                                                         sub_position_pct,
                                                          palette_mode);
                         }
                         else
@@ -1406,6 +1447,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                          cli_font_style,
                                                          cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                          used_align,
+                                                         sub_position_pct,
                                                          palette_mode);
                                 free(pm);
                             }
@@ -1421,6 +1463,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                              cli_font_style,
                                                              cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                              used_align,
+                                                             sub_position_pct,
                                                              palette_mode);
                             }
                         }
@@ -1433,6 +1476,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                cli_font_style,
                                                cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                used_align,
+                                               sub_position_pct,
                                                palette_mode);
                     }
                     if (bench_mode)
@@ -2136,6 +2180,49 @@ static void ctx_cleanup(struct MainCtx *ctx)
  *     function when adding new command-line options or altering the overall
  *     processing pipeline.
  */
+
+/**
+ * Calculate adaptive fontsize based on display height.
+ * Mirrors the logic in render_text_pango() for consistency.
+ *
+ * @param fontsize CLI-provided fontsize (0 = adaptive, >0 = use as-is)
+ * @param disp_h Display height in pixels (default 1080 if unknown)
+ * @return The fontsize to use (either provided or calculated)
+ */
+static int calculate_fontsize(int fontsize, int disp_h)
+{
+    if (fontsize > 0) {
+        return fontsize;
+    }
+    
+    if (disp_h <= 0) disp_h = 1080; /* fallback to HD default */
+    
+    int f = 18;
+    if (disp_h <= 576) {
+        /* SD: interpolate 19..24 */
+        double t = (double)disp_h / 576.0;
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+        double v = 19.0 + t * (24.0 - 19.0);
+        f = (int)round(v);
+    } else if (disp_h <= 1080) {
+        /* HD: interpolate 36..42 */
+        double t = ((double)disp_h - 576.0) / (1080.0 - 576.0);
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+        double v = 36.0 + t * (42.0 - 36.0);
+        f = (int)round(v);
+    } else {
+        /* UHD: interpolate 82..88 */
+        double t = ((double)disp_h - 1080.0) / (4320.0 - 1080.0);
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+        double v = 82.0 + t * (88.0 - 82.0);
+        f = (int)round(v);
+    }
+    return f;
+}
+
 int main(int argc, char **argv)
 {
     int ret = 0; /* return value: 0=ok, non-zero on error */
@@ -2197,6 +2284,9 @@ int main(int argc, char **argv)
 
     /* 0 means "not set" — let render_pango compute dynamic sizing based on resolution */
     int cli_fontsize = 0;
+    
+    /* Default subtitle position: 5% from bottom */
+    double sub_position_pct = 5.0;
 
     /*
      * cli_fgcolor: Foreground color for subtitle text, specified as a hex string compatible with Pango.
@@ -2244,6 +2334,7 @@ int main(int argc, char **argv)
                                       &subtitle_delay_ms,
                                       &subtitle_delay_list,
                                       &cli_fontsize,
+                                      &sub_position_pct,
                                       &cli_font,
                                       &cli_font_style,
                                       &cli_fgcolor,
@@ -2278,16 +2369,6 @@ int main(int argc, char **argv)
     }
     ctx.cli_font = resolved_font;
     ctx.cli_font_style = resolved_style;
-    
-    /* Output encoding status with font information (suppress in QC-only mode) */
-    if (!qc_only) {
-        printf("Encoding the subtitles with font: %s", resolved_font);
-        if (resolved_style) {
-            printf(" and style: %s\n\n", resolved_style);
-        } else {
-            printf(" and style: (default)\n\n");
-        }
-    }
 
     /*
      * Starts the benchmarking timer to measure the execution time of subsequent code.
@@ -2404,6 +2485,20 @@ int main(int argc, char **argv)
     if (ret != 0) {
         ctx_cleanup(&ctx);
         return ret;
+    }
+
+    /* Calculate the actual fontsize (adaptive or user-provided) now that video_h is known */
+    int actual_fontsize = calculate_fontsize(cli_fontsize, video_h);
+    
+    /* Output encoding status with font information (suppress in QC-only mode) */
+    if (!qc_only) {
+        printf("Encoding the subtitles with font: %s", resolved_font);
+        if (resolved_style) {
+            printf(" and style: %s", resolved_style);
+        } else {
+            printf(" and style: (default)");
+        }
+        printf(", fontsize: %d, position: %.1f%% from bottom\n\n", actual_fontsize, sub_position_pct);
     }
 
     /* mirror ctx-owned format contexts and parsed delay_vals into local vars for the rest of main */
@@ -2545,7 +2640,7 @@ int main(int argc, char **argv)
 
     ret = ctx_demux_mux_loop(&ctx, tracks, ntracks,
                          video_w, video_h, use_ass,
-                         cli_fontsize, input_start_pts90);
+                         cli_fontsize, sub_position_pct, input_start_pts90);
     if (ret != 0)
         return finalize_main(&ctx, ctx_cleaned, ret);
 
