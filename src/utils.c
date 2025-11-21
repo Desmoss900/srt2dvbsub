@@ -119,7 +119,7 @@ void print_help(void)
     printf("      --list-fonts            (unavailable: rebuild with Fontconfig support)\n");
 #endif
     printf("      --qc-only               Run srt file quality checks only (no mux)\n");
-    printf("      --palette MODE          Palette mode (ebu-broadcast|broadcast|web|legacy)\n");
+    printf("      --palette MODE          Palette mode (ebu-broadcast|broadcast|greyscale)\n");
     printf("      --font FONTNAME         Set font family (default is DejaVu Sans)\n");
     printf("      --font-style STYLE      Optional font style variant (e.g. Bold, Italic, Light)\n");
     printf("      --fontsize N            Set font size in px (overrides dynamic sizing)\n");

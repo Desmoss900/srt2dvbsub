@@ -60,52 +60,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdatomic.h>
-/* Use a thread-local PangoFontMap to avoid concurrent internal Pango
- * mutations when rendering from multiple worker threads. We create a
- * pthread key with a destructor that unrefs the fontmap on thread exit.
- */
 #include <pthread.h>
-
-/*
- * AUDIT SUMMARY (render_pango.c)
- * --------------------------------
- * This file was audited and hardened. The following corrections and
- * defensive changes were applied to improve safety and robustness:
- *
- *  - srt_to_pango_markup(): safer bounded buffer usage, checked snprintf
- *    return values, and robust entity escaping.
- *  - parse_hex_color(): validated sscanf return values and corrected
- *    parsing of #AARRGGBB (alpha-first) formats; robust fallback to
- *    opaque white on malformed input.
- *  - Allocation safety helpers: added mul_size_ok() and safe_malloc_count()
- *    to detect size_t overflow and apply a conservative pixel cap.
- *  - Pixel caps: RENDER_PANGO_SAFE_MAX_PIXELS (total) and
- *    RENDER_PANGO_SAFE_MAX_DIM (per-dimension) to avoid excessive
- *    allocations for pathological sizes.
- *  - Centralized bitmap allocation/cleanup: allocate_bitmap_buffers()
- *    and free_bitmap_buffers() with nb_colors bookkeeping.
- *  - Defensive Cairo/Pango checks: verify surface/context creation and
- *    cairo_image_surface_get_data() before accessing pixel data.
- *  - Thread-local fontmap: created with pthread_once; get_thread_pango_fontmap()
- *    checks and logs failures; render_pango_cleanup() unrefs thread fontmaps.
- *  - Atomic runtime knobs: dbg_ssaa_override and dbg_no_unsharp are atomic_int
- *    to avoid data races during concurrent reads/writes.
- *  - Early short-circuit for absurd display sizes: render_text_pango()
- *    rejects implausible disp_w/disp_h values to avoid creating huge layouts.
- *  - Centralized error cleanup paths: consistent final_cleanup/cleanup calls
- *    to prevent leaks and partial frees on early exits.
- *
- * Tests:
- *  - Added `tool/test_render_pango.c` with cases for markup, long inputs,
- *    color parsing, basic render, and extreme-size guards.
- *  - Added `tool/Makefile` targets: `test` and `asan-test` (Address/Undefined
- *    sanitizer builds). The test harness calls render_pango_cleanup() and
- *    attempts to call FcFini() at runtime to reduce sanitizer-reported leaks.
- *
- * Result: functional unit tests pass and sanitizer/Valgrind runs show no
- * definite leaks (remaining reachable allocations originate in system
- * libraries and are considered benign for this project).
- */
 
 /*
  * Static variables for managing thread-specific Pango fontmap key.
