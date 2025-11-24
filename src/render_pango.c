@@ -549,6 +549,73 @@ char* srt_to_pango_markup(const char *srt_text) {
 }
 
 /*
+ * cleanup_render_resources
+ * ------------------------
+ * Helper function to cleanup all Pango/Cairo resources allocated during rendering.
+ * Called on both success and failure paths to ensure no resource leaks.
+ *
+ * Parameters:
+ *  - success: if true, configures bitmap with position/dimensions; if false, frees buffers
+ *  - bm: Bitmap to configure on success or cleanup on failure
+ *  - text_x, text_y, w, h, pad: Bitmap position and dimension parameters (used only on success)
+ *  - desc: Pango font description to free
+ *  - layout_dummy: Dummy Pango layout to unref
+ *  - ctx_dummy: Dummy Pango context to unref
+ *  - cr_dummy: Dummy Cairo context to destroy
+ *  - dummy: Dummy Cairo surface to destroy
+ *  - layout_real: Real Pango layout to unref
+ *  - ctx_real: Real Pango context to unref
+ *  - cr: Real Cairo context to destroy
+ *  - surface_ss: Supersampled Cairo surface to destroy
+ *  - surface: Final Cairo surface to destroy
+ */
+static void cleanup_render_resources(bool success, Bitmap *bm,
+                                     int text_x, int text_y, int w, int h, int pad,
+                                     PangoFontDescription *desc,
+                                     PangoLayout *layout_dummy,
+                                     PangoContext *ctx_dummy,
+                                     cairo_t *cr_dummy,
+                                     cairo_surface_t *dummy,
+                                     PangoLayout *layout_real,
+                                     PangoContext *ctx_real,
+                                     cairo_t *cr,
+                                     cairo_surface_t *surface_ss,
+                                     cairo_surface_t *surface)
+{
+    if (success) {
+        bm->x = text_x - pad;
+        bm->y = text_y - pad;
+        bm->w = w;
+        bm->h = h;
+    }
+    /* Note: bitmap buffer cleanup is handled separately in error paths;
+     * this function only cleans up Pango/Cairo resources. */
+
+    /* Cleanup Pango/Cairo resources (proper destruction order matters)
+     * Destroy contexts BEFORE surfaces, layouts BEFORE contexts, font descriptions last.
+     * This respects the dependency chain to avoid use-after-free. 
+     * We do NOT NULL the pointers here since they're passed by value, not reference. */
+    
+    /* Destroy Cairo contexts first (they reference surfaces) */
+    if (cr_dummy) cairo_destroy(cr_dummy);
+    if (cr) cairo_destroy(cr);
+    
+    /* Destroy Pango layouts and contexts next */
+    if (layout_dummy) g_object_unref(layout_dummy);
+    if (layout_real) g_object_unref(layout_real);
+    if (ctx_dummy) g_object_unref(ctx_dummy);
+    if (ctx_real) g_object_unref(ctx_real);
+    
+    /* Destroy font description */
+    if (desc) pango_font_description_free(desc);
+    
+    /* Destroy Cairo surfaces last (all contexts referencing them are already destroyed) */
+    if (dummy) cairo_surface_destroy(dummy);
+    if (surface_ss) cairo_surface_destroy(surface_ss);
+    if (surface) cairo_surface_destroy(surface);
+}
+
+/*
  * render_text_pango
  * -----------------
  * Render the provided Pango markup into an indexed Bitmap suitable for
@@ -591,7 +658,6 @@ Bitmap render_text_pango(const char *markup,
     cairo_surface_t *surface_ss = NULL;
     cairo_t *cr = NULL;
     cairo_surface_t *surface = NULL;
-    bool success = false; /* set true only on full successful render */
 
     /* Ensure we have a single process-wide PangoFontMap to avoid creating
      * multiple internal fontconfig allocations across repeated renders.
@@ -667,7 +733,12 @@ Bitmap render_text_pango(const char *markup,
         desc = pango_font_description_from_string(base_family);
     if (!desc) {
         desc = pango_font_description_new();
-        if (!desc) goto final_cleanup;
+        if (!desc) {
+            cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                    desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                    layout_real, ctx_real, cr, surface_ss, surface);
+            return bm;
+        }
         pango_font_description_set_family(desc, base_family);
     }
     pango_font_description_set_absolute_size(desc, fontsize * PANGO_SCALE);
@@ -679,11 +750,26 @@ Bitmap render_text_pango(const char *markup,
 
     /* --- Dummy layout for measurement --- */
     dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    if (!dummy || cairo_surface_status(dummy) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    if (!dummy || cairo_surface_status(dummy) != CAIRO_STATUS_SUCCESS) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     cr_dummy = cairo_create(dummy);
-    if (!cr_dummy || cairo_status(cr_dummy) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    if (!cr_dummy || cairo_status(cr_dummy) != CAIRO_STATUS_SUCCESS) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     ctx_dummy = pango_font_map_create_context(thread_fm);
-    if (!ctx_dummy) goto final_cleanup;
+    if (!ctx_dummy) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     
     /* Apply same font options to dummy context for consistent measurement */
     cairo_font_options_t *fopt_dummy = cairo_font_options_create();
@@ -699,7 +785,12 @@ Bitmap render_text_pango(const char *markup,
     cairo_font_options_destroy(fopt_dummy);
     
     layout_dummy = pango_layout_new(ctx_dummy);
-    if (!layout_dummy) goto final_cleanup;
+    if (!layout_dummy) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     pango_layout_set_font_description(layout_dummy, desc);
     pango_layout_set_width(layout_dummy, disp_w * 0.8 * PANGO_SCALE);
     pango_layout_set_wrap(layout_dummy, PANGO_WRAP_WORD_CHAR);
@@ -757,14 +848,29 @@ Bitmap render_text_pango(const char *markup,
     int ss_w = (lw + 2*pad) * ss;
     int ss_h = (lh + 2*pad) * ss;
     surface_ss = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ss_w, ss_h);
-    if (!surface_ss || cairo_surface_status(surface_ss) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    if (!surface_ss || cairo_surface_status(surface_ss) != CAIRO_STATUS_SUCCESS) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     cr = cairo_create(surface_ss);
-    if (!cr || cairo_status(cr) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    if (!cr || cairo_status(cr) != CAIRO_STATUS_SUCCESS) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     cairo_set_antialias(cr, CAIRO_ANTIALIAS_BEST);
     cairo_scale(cr, (double)ss, (double)ss);  /* draw at larger resolution then downscale */
 
     ctx_real = pango_font_map_create_context(thread_fm);
-    if (!ctx_real) goto final_cleanup;
+    if (!ctx_real) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     /* For HD/UHD with stronger supersampling we prefer to disable
      * hinting/metrics so glyph shapes remain smooth and rely on SSAA
      * for crisp edges. Apply cairo font options to both Cairo and Pango
@@ -781,7 +887,12 @@ Bitmap render_text_pango(const char *markup,
     cairo_set_font_options(cr, fopt);
     cairo_font_options_destroy(fopt);
     layout_real = pango_layout_new(ctx_real);
-    if (!layout_real) goto final_cleanup;
+    if (!layout_real) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     pango_layout_set_font_description(layout_real, desc);
     pango_layout_set_width(layout_real, layout_width_for_real * PANGO_SCALE);
     pango_layout_set_wrap(layout_real, PANGO_WRAP_WORD_CHAR);
@@ -853,7 +964,12 @@ Bitmap render_text_pango(const char *markup,
          * to limit CPU cost. */
         if (disp_h <= 1080) {
             unsigned char *ss_data_ls = cairo_image_surface_get_data(surface_ss);
-            if (!ss_data_ls) goto final_cleanup;
+            if (!ss_data_ls) {
+                cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                        desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                        layout_real, ctx_real, cr, surface_ss, surface);
+                return bm;
+            }
             int ss_stride_ls = cairo_image_surface_get_stride(surface_ss);
             int sw_ls = ss_w, sh_ls = ss_h;
             /* horizontal -> tmp buffer */
@@ -940,7 +1056,12 @@ Bitmap render_text_pango(const char *markup,
             cairo_surface_mark_dirty(surface_ss);
         }
     unsigned char *ss_data = cairo_image_surface_get_data(surface_ss);
-    if (!ss_data) goto final_cleanup;
+    if (!ss_data) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     int ss_stride = cairo_image_surface_get_stride(surface_ss);
         int sw = ss_w, sh = ss_h;
         uint32_t *tmp = NULL;
@@ -1055,7 +1176,12 @@ Bitmap render_text_pango(const char *markup,
     int w = lw+2*pad;
     int h = lh+2*pad;
     surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) goto final_cleanup;
+    if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
     
     /* Composite the downsampled text without background fill */
     {
@@ -1071,7 +1197,12 @@ Bitmap render_text_pango(const char *markup,
     }
 
     unsigned char *data = cairo_image_surface_get_data(surface);
-    if (!data) goto final_cleanup;
+    if (!data) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
 
     /* Tiny unsharp mask to restore edge crispness after downsampling.
      * We use a small 3x3 box blur to get a blurred version, then add
@@ -1336,7 +1467,10 @@ Bitmap render_text_pango(const char *markup,
      * allocation and pixel-limit logic via allocate_bitmap_buffers(). */
     if (!allocate_bitmap_buffers(&bm, (size_t)w, (size_t)h, palette_mode)) {
         /* skip heavy allocation and return an empty bitmap */
-        goto final_cleanup;
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
     }
 
     int stride = cairo_image_surface_get_stride(surface);
@@ -1380,9 +1514,12 @@ Bitmap render_text_pango(const char *markup,
     if (!err_r_cur || !err_g_cur || !err_b_cur || !err_r_next || !err_g_next || !err_b_next) {
     free(err_r_cur); free(err_g_cur); free(err_b_cur);
     free(err_r_next); free(err_g_next); free(err_b_next);
-    /* deallocate bitmap allocations made earlier */
+    /* Cleanup Cairo/Pango resources, and manually free bitmap buffers */
     free_bitmap_buffers(&bm);
-    goto final_cleanup;
+    cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                            desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                            layout_real, ctx_real, cr, surface_ss, surface);
+    return bm;
     }
 
     for (int yy = 0; yy < h; yy++) {
@@ -1759,33 +1896,11 @@ Bitmap render_text_pango(const char *markup,
         }
     }
 
-    /* Mark successful completion only if we reach here by falling through
-     * (goto-based early exits jump directly to the label below and will not
-     * execute this assignment). */
-    success = true;
-final_cleanup:
-    if (success) {
-        bm.x = text_x - pad;
-        bm.y = text_y - pad;
-        bm.w = w;
-        bm.h = h;
-    } else {
-        /* Free any partially-allocated bitmap buffers to avoid leaking on failure */
-        free_bitmap_buffers(&bm);
-    }
-
-    /* Cleanup Pango/Cairo resources (guarded) */
-    if (desc) pango_font_description_free(desc);
-    if (layout_dummy) g_object_unref(layout_dummy);
-    if (ctx_dummy) g_object_unref(ctx_dummy);
-    if (cr_dummy) cairo_destroy(cr_dummy);
-    if (dummy) cairo_surface_destroy(dummy);
-    if (layout_real) g_object_unref(layout_real);
-    if (ctx_real) g_object_unref(ctx_real);
-    if (cr) cairo_destroy(cr);
-    if (surface_ss) cairo_surface_destroy(surface_ss);
-    if (surface) cairo_surface_destroy(surface);
-
+    /* Mark successful completion and cleanup all resources */
+    cleanup_render_resources(true, &bm, text_x, text_y, w, h, pad,
+                            desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                            layout_real, ctx_real, cr, surface_ss, surface);
+    
     return bm;
 }
 
