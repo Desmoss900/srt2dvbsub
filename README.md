@@ -220,15 +220,15 @@ Here are examples of the output of the srt2dvbsub program:
 
 SD Subtitle (Font: Open Sans, Style: Light, Size: 24):
 
-<img src="docs/images/sd_eng.png" alt="SD Subtitle" width="200"/>
+<img src="docs/images/sd_eng.png" alt="SD Subtitle" width="300"/>
 
 HD Subtitle (Font: Open Sans, Style: Medium, Size: 42):
 
-<img src="docs/images/hd_eng.png" alt="HD Subtitle" width="300"/>
+<img src="docs/images/hd_eng.png" alt="HD Subtitle" width="400"/>
 
 UHD Subtitle (Font: Open Sans, Style: Light, Size: 84):
 
-<img src="docs/images/uhd_eng.png" alt="UHD Subtitle" width="400"/>
+<img src="docs/images/uhd_eng.png" alt="UHD Subtitle" width="500"/>
 
 ### Multi-Language with Custom Styling
 ```bash

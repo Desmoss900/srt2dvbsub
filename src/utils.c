@@ -128,11 +128,12 @@ void print_help(void)
     printf("      --shadowcolor #AARRGGBB Shadow color (alpha optional...in quotes i.e. \"#00808080\")\n");
     printf("      --bg-color #RRGGBB      Background color (in quotes i.e. \"#000000\")\n");
     printf("      --sub-position PERCENT  Vertical position from bottom (0.0-50.0%%, default: 5.0%%)\n");
-    printf("      --ssaa N                Force supersample factor (1..24) (default 4)\n");        
+    printf("      --ssaa N                Force supersample factor (1..24) (default 4)\n");
+    printf("      --no-unsharp            Disable the final unsharp pass to speed rendering\n");
+    printf("      --png-dir DIR           Custom directory for debug PNG output (default: pngs/)\n");        
     printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
     printf("      --enc-threads N         Encoder thread count (0=auto)\n");
     printf("      --render-threads N      Parallel render workers (0=single-thread)\n");
-    printf("      --no-unsharp            Disable the final unsharp pass to speed rendering\n");
     printf("      --bench                 Enable micro-bench timing output\n");    
     printf("      --debug N               Set debug verbosity (0=quiet,1=errors,2=verbose)\n");
     printf("      --license               Show license information and exit\n");
