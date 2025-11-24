@@ -216,6 +216,20 @@ Run `srt2dvbsub --help` for command-line reference with language codes.
 
 ## Examples
 
+Here are examples of the output of the srt2dvbsub program:
+
+SD Subtitle:
+
+<img src="docs/images/sd_eng.png" alt="SD Subtitle" width="200"/>
+
+HD Subtitle:
+
+<img src="docs/images/hd_eng.png" alt="HD Subtitle" width="300"/>
+
+UHD Subtitle:
+
+<img src="docs/images/uhd_eng.png" alt="UHD Subtitle" width="400"/>
+
 ### Multi-Language with Custom Styling
 ```bash
 srt2dvbsub \
