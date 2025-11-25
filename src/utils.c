@@ -1,31 +1,34 @@
-/*  
+/*
 * Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
 * All rights reserved.
 *
-* This software is licensed under the "Personal Use License" described below.
+* PERSONAL USE LICENSE - NON-COMMERCIAL ONLY
+* ────────────────────────────────────────────────────────────────
+* This software is provided for personal, educational, and non-commercial
+* use only. You are granted permission to use, copy, and modify this
+* software for your own personal or educational purposes, provided that
+* this copyright and license notice appears in all copies or substantial
+* portions of the software.
 *
-* ────────────────────────────────────────────────────────────────
-* PERSONAL USE LICENSE
-* ────────────────────────────────────────────────────────────────
-* Permission is hereby granted, free of charge, to any individual person
-* using this software for personal, educational, or non-commercial purposes,
-* to use, copy, modify, merge, publish, and/or build upon this software,
-* provided that this copyright and license notice appears in all copies
-* or substantial portions of the Software.
+* PERMITTED USES:
+*   ✓ Personal projects and experimentation
+*   ✓ Educational purposes and learning
+*   ✓ Non-commercial testing and evaluation
+*   ✓ Individual hobbyist use
 *
-* ────────────────────────────────────────────────────────────────
-* COMMERCIAL USE
-* ────────────────────────────────────────────────────────────────
-* Commercial use of this software, including but not limited to:
-*   • Incorporation into a product or service sold for profit,
-*   • Use within an organization or enterprise in a revenue-generating activity,
-*   • Modification, redistribution, or hosting as part of a commercial offering,
-* requires a separate **Commercial License** from the copyright holder.
+* PROHIBITED USES:
+*   ✗ Commercial use of any kind
+*   ✗ Incorporation into products or services sold for profit
+*   ✗ Use within organizations or enterprises for revenue-generating activities
+*   ✗ Modification, redistribution, or hosting as part of any commercial offering
+*   ✗ Licensing, selling, or renting this software to others
+*   ✗ Using this software as a foundation for commercial services
 *
-* To obtain a commercial license, please contact:
-*   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.de]  
-*   Website: [www.chili-iptv.de]
+* No commercial license is available. For inquiries regarding any use not
+* explicitly permitted above, contact:
+*   Mark E. Rosche, Chili IPTV Systems
+*   Email: license@chili-iptv.de
+*   Website: www.chili-iptv.de
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -39,9 +42,7 @@
 * DEALINGS IN THE SOFTWARE.
 *
 * ────────────────────────────────────────────────────────────────
-* Summary:
-*   ✓ Free for personal, educational, and hobbyist use.
-*   ✗ Commercial use requires a paid license.
+* By using this software, you agree to these terms and conditions.
 * ────────────────────────────────────────────────────────────────
 */
 
@@ -350,35 +351,38 @@ void print_license(void)
     printf("Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems\n");
     printf("All rights reserved.\n");
     printf("\n");
-    printf("This software is licensed under the \" Personal Use License \" described below.\n");
+    printf("PERSONAL USE LICENSE - NON-COMMERCIAL ONLY\n");
+    printf("────────────────────────────────────────────────────────────────\n");
+    printf("This software is provided for personal, educational, and non-commercial\n");
+    printf("use only. You are granted permission to use, copy, and modify this\n");
+    printf("software for your own personal or educational purposes, provided that\n");
+    printf("this copyright and license notice appears in all copies or substantial\n");
+    printf("portions of the software.\n");
     printf("\n");
-    printf("────────────────────────────────────────────────────────────────\n");
-    printf("PERSONAL USE LICENSE\n");
-    printf("────────────────────────────────────────────────────────────────\n");
-    printf("Permission is hereby granted, free of charge, to any individual person\n");
-    printf("using this software for personal, educational, or non-commercial purposes,\n");
-    printf("to use, copy, modify, merge, publish, and/or build upon this software,\n");
-    printf("provided that this copyright and license notice appears in all copies\n");
-    printf("or substantial portions of the Software.\n");
+    printf("PERMITTED USES:\n");
+    printf("  ✓ Personal projects and experimentation\n");
+    printf("  ✓ Educational purposes and learning\n");
+    printf("  ✓ Non-commercial testing and evaluation\n");
+    printf("  ✓ Individual hobbyist use\n");
     printf("\n");
-    printf("────────────────────────────────────────────────────────────────\n");
-    printf("COMMERCIAL USE\n");
-    printf("────────────────────────────────────────────────────────────────\n");
-    printf("Commercial use of this software, including but not limited to:\n");
-    printf("  • Incorporation into a product or service sold for profit,\n");
-    printf("  • Use within an organization or enterprise in a revenue-generating activity,\n");
-    printf("  • Modification, redistribution, or hosting as part of a commercial offering,\n");
-    printf("requires a separate **Commercial License** from the copyright holder.\n");
+    printf("PROHIBITED USES:\n");
+    printf("  ✗ Commercial use of any kind\n");
+    printf("  ✗ Incorporation into products or services sold for profit\n");
+    printf("  ✗ Use within organizations or enterprises for revenue-generating activities\n");
+    printf("  ✗ Modification, redistribution, or hosting as part of any commercial offering\n");
+    printf("  ✗ Licensing, selling, or renting this software to others\n");
+    printf("  ✗ Using this software as a foundation for commercial services\n");
     printf("\n");
-    printf("To obtain a commercial license, please contact:\n");
-    printf("  [Mark E. Rosche | Chili-IPTV Systems]\n");
-    printf("  Email: [license@chili-iptv.de]\n");
-    printf("  Website: [www.chili-iptv.de]\n");
+    printf("No commercial license is available. For inquiries regarding any use not\n");
+    printf("explicitly permitted above, contact:\n");
+    printf("  Mark E. Rosche, Chili IPTV Systems\n");
+    printf("  Email: license@chili-iptv.de\n");
+    printf("  Website: www.chili-iptv.de\n");
     printf("\n");
     printf("────────────────────────────────────────────────────────────────\n");
     printf("DISCLAIMER\n");
     printf("────────────────────────────────────────────────────────────────\n");
-    printf("THIS SOFTWARE IS PROVIDED \" AS IS \", WITHOUT WARRANTY OF ANY KIND,\n");
+    printf("THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\n");
     printf("EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES\n");
     printf("OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\n");
     printf("IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,\n");
@@ -387,9 +391,7 @@ void print_license(void)
     printf("DEALINGS IN THE SOFTWARE.\n");
     printf("\n");
     printf("────────────────────────────────────────────────────────────────\n");
-    printf("Summary:\n");
-    printf("  ✓ Free for personal, educational, and hobbyist use.\n");
-    printf("  ✗ Commercial use requires a paid license.\n");
+    printf("By using this software, you agree to these terms and conditions.\n");
     printf("────────────────────────────────────────────────────────────────\n");
     printf("\n");
 }

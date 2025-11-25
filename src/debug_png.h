@@ -1,31 +1,34 @@
-/*  
+/*
 * Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
 * All rights reserved.
 *
-* This software is licensed under the "Personal Use License" described below.
+* PERSONAL USE LICENSE - NON-COMMERCIAL ONLY
+* ────────────────────────────────────────────────────────────────
+* This software is provided for personal, educational, and non-commercial
+* use only. You are granted permission to use, copy, and modify this
+* software for your own personal or educational purposes, provided that
+* this copyright and license notice appears in all copies or substantial
+* portions of the software.
 *
-* ────────────────────────────────────────────────────────────────
-* PERSONAL USE LICENSE
-* ────────────────────────────────────────────────────────────────
-* Permission is hereby granted, free of charge, to any individual person
-* using this software for personal, educational, or non-commercial purposes,
-* to use, copy, modify, merge, publish, and/or build upon this software,
-* provided that this copyright and license notice appears in all copies
-* or substantial portions of the Software.
+* PERMITTED USES:
+*   ✓ Personal projects and experimentation
+*   ✓ Educational purposes and learning
+*   ✓ Non-commercial testing and evaluation
+*   ✓ Individual hobbyist use
 *
-* ────────────────────────────────────────────────────────────────
-* COMMERCIAL USE
-* ────────────────────────────────────────────────────────────────
-* Commercial use of this software, including but not limited to:
-*   • Incorporation into a product or service sold for profit,
-*   • Use within an organization or enterprise in a revenue-generating activity,
-*   • Modification, redistribution, or hosting as part of a commercial offering,
-* requires a separate **Commercial License** from the copyright holder.
+* PROHIBITED USES:
+*   ✗ Commercial use of any kind
+*   ✗ Incorporation into products or services sold for profit
+*   ✗ Use within organizations or enterprises for revenue-generating activities
+*   ✗ Modification, redistribution, or hosting as part of any commercial offering
+*   ✗ Licensing, selling, or renting this software to others
+*   ✗ Using this software as a foundation for commercial services
 *
-* To obtain a commercial license, please contact:
-*   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.de]  
-*   Website: [www.chili-iptv.de]
+* No commercial license is available. For inquiries regarding any use not
+* explicitly permitted above, contact:
+*   Mark E. Rosche, Chili IPTV Systems
+*   Email: license@chili-iptv.de
+*   Website: www.chili-iptv.de
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -39,9 +42,7 @@
 * DEALINGS IN THE SOFTWARE.
 *
 * ────────────────────────────────────────────────────────────────
-* Summary:
-*   ✓ Free for personal, educational, and hobbyist use.
-*   ✗ Commercial use requires a paid license.
+* By using this software, you agree to these terms and conditions.
 * ────────────────────────────────────────────────────────────────
 */
 #ifndef DEBUG_PNG_H
