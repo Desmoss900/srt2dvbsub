@@ -15,6 +15,7 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 -  Multi-track subtitle support (up to 16 simultaneous tracks)
 -  Professional text-to-bitmap rendering (Pango/Cairo)
 -  Direct MPEG-TS multiplexing
+-  Automatic resolution detection (SD, HD, UHD)
 -  Multi-threaded rendering for high performance
 -  ASS/SSA tag support and rendering (optional)
 -  SRT Quality control (QC) verification mode
