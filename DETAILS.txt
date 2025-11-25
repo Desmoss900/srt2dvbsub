@@ -1,28 +1,41 @@
 ================================================================================
-                            SRT2DVBSUB
-         Convert SRT Subtitles to DVB Subtitles in MPEG-TS
+                            SRT2dvbSUB
+         Convert SRT Subtitles to dvb Subtitles in MPEG-TS
 ================================================================================
 
+DISCLAIMER
+================================================================================
+
+This project is an independent, open-source implementation with no affiliation
+with, endorsement from, or connection to the DVB Project or the DVB
+Organisation. The acronym "dvb" in this project refers exclusively to the dvb
+(Digital Video Broadcasting) technology standard as defined in relevant
+technical specifications. This tool implements the dvb subtitle specification
+for interoperability purposes only. Use of the term "dvb" is for technical
+reference and does not imply any official status or authorization from the DVB
+Organisation.
+
+================================================================================
 1. OVERVIEW
 ================================================================================
 
 srt2dvbsub is an attempt at a sophisticated command-line tool that converts
-SRT (SubRip) subtitle files into DVB (Digital Video Broadcasting) subtitle tracks 
+SRT (SubRip) subtitle files into dvb subtitle tracks 
 and multiplexes them directly into MPEG-TS (Transport Stream) files.
 
 This tool is essential for broadcasters, IPTV providers, and content
-distribution networks that need to deliver compliant DVB subtitles embedded in
+distribution networks that need to deliver compliant dvb subtitles embedded in
 transport streams for television distribution or digital distribution platforms.
 
 Key capabilities:
-  • Convert SRT subtitle text to DVB bitmap subtitles
+  • Convert SRT subtitle text to dvb bitmap subtitles
   • Support for ASS/SSA format with advanced rendering options
   • Multi-track subtitle support (up to 16 simultaneous tracks)
   • Somewhat professional quality text-to-bitmap rendering using Pango/Cairo
   • Direct MPEG-TS multiplexing without separate remuxing step
   • Multi-threaded rendering for high performance
   • Quality control (QC) verification of subtitle files
-  • Comprehensive language code support (DVB 3-letter codes)
+  • Comprehensive language code support (dvb 3-letter codes)
   • Full control over subtitle appearance (fonts, colors, sizing)
 
 
@@ -30,17 +43,17 @@ Key capabilities:
 ================================================================================
 
 Traditional workflow limitations:
-  • Most open source video editing tools cannot directly output DVB subtitles
+  • Most open source video editing tools cannot directly output dvb subtitles
   • Subtitles from SRT files must be manually converted to bitmap format
-  • DVB subtitles are binary and cannot be edited in text editors
+  • dvb subtitles are binary and cannot be edited in text editors
   • Post-production subtitle generation is labor-intensive
 
 srt2dvbsub solves these problems by:
-  • Automating SRT-to-DVB conversion in a single command
+  • Automating SRT-to-dvb conversion in a single command
   • Supporting professional text rendering with full font control
   • Enabling batch processing for content archives
   • Integrating into automated encoding pipelines
-  • Eliminating need for proprietary DVB authoring tools
+  • Eliminating need for proprietary dvb authoring tools
   • Providing QC checks for subtitle file validity before encoding
 
 Primary use cases:
@@ -58,7 +71,7 @@ Primary use cases:
   ✓ SRT (SubRip) format parsing and conversion - ONLY format accepted
   ✓ ASS/SSA tag support within SRT files (evaluated and redered only with --ass flag)
   ✓ Multi-track subtitle processing
-  ✓ Per-track language code assignment (DVB 3-letter ISO codes)
+  ✓ Per-track language code assignment (dvb 3-letter ISO codes)
   ✓ Forced subtitle flag per track
   ✓ Hearing-impaired subtitle flag per track
 
@@ -71,9 +84,9 @@ Primary use cases:
   ✓ Custom foreground, outline, and shadow colors
   ✓ Color validation and format conversion
 
-3.3 DVB Subtitle Generation
+3.3 dvb Subtitle Generation
   ✓ MPEG-TS multiplexing with subtitle tracks
-  ✓ DVB Page Composition Segment (PCS) generation
+  ✓ dvb Page Composition Segment (PCS) generation
   ✓ Palette mode selection (EBU broadcast, broadcast, greyscale)
   ✓ Automatic dithering for color reduction
   ✓ Unsharp mask filter for text clarity (optional)
@@ -167,7 +180,7 @@ Primary use cases:
       
   -o, --output FILE
       Output file path (MPEG-TS)
-      • Will contain original streams plus DVB subtitle tracks
+      • Will contain original streams plus dvb subtitle tracks
       • Existing file will be overwritten
       • Path must be < 4096 bytes (PATH_MAX)
       
@@ -184,7 +197,7 @@ Primary use cases:
       • Use without argument and next positional arg as auto-correct fallback
       
   -l, --languages CODES
-      Comma-separated list of DVB 3-letter language codes
+      Comma-separated list of dvb 3-letter language codes
       • Format: eng,deu,fra,etc.
       • Must have same count as --srt files
       • Use --help to see complete list of valid codes
@@ -267,7 +280,7 @@ Primary use cases:
       • Useful for avoiding overlaps with on-screen graphics or logos
 
 
-5.3 DVB Subtitle Options
+5.3 dvb Subtitle Options
   --palette MODE
       Palette mode for color reduction
       • Modes: "ebu-broadcast", "broadcast", "greyscale"
@@ -275,7 +288,7 @@ Primary use cases:
       • broadcast: Broadcast standard palette
       • greyscale: Grayscale palette
       • Default: ebu-broadcast
-      • Affects how colors are dithered to DVB palette
+      • Affects how colors are dithered to dvb palette
       
   --ssaa N
       Supersample anti-aliasing factor (1..24)
@@ -302,7 +315,7 @@ Primary use cases:
       • Positive: delay subtitles (appear later)
       • Negative: advance subtitles (appear earlier)
       • Range: -5000 to +5000 ms (reasonable limits)
-      • Applied before DVB encoding
+      • Applied before dvb encoding
 
 
 5.5 Subtitle Attributes
@@ -329,7 +342,7 @@ Primary use cases:
         - "--hi 0,0,1": Only third track is hearing-impaired
         - "--hi 1,1,0": First two are hearing-impaired, third is regular
       • Hearing-impaired subtitles include sound descriptions
-      • Affects DVB subtitle page composition and signaling
+      • Affects dvb subtitle page composition and signaling
       • Example content: "[DOOR OPENS]" or "[MUSIC PLAYING]"
       • Note: Duplicate language codes REQUIRE different forced/hi flags
 
@@ -478,10 +491,10 @@ Primary use cases:
     --bench
 
 
-7. DVB LANGUAGE CODES
+7. dvb LANGUAGE CODES
 ================================================================================
 
-srt2dvbsub supports all standard DVB 3-letter ISO 639-2 language codes.
+srt2dvbsub supports all standard dvb 3-letter ISO 639-2 language codes.
 Common codes include:
 
   eng  English / English           fin  Finnish / Suomi              heb  Hebrew / עברית               pan  Punjabi / ਪੰਜਾਬੀ
@@ -590,7 +603,7 @@ Common codes include:
 9.1 Main Output
   • MPEG-TS file specified via --output
     - Contains original video/audio streams
-    - DVB subtitle tracks multiplexed in
+    - dvb subtitle tracks multiplexed in
     - Ready for broadcast, Blu-ray, or OTT distribution
 
 9.2 Quality Control Report (with --qc-only)
@@ -604,7 +617,7 @@ Common codes include:
   • PNG files in specified directory
     - One file per subtitle event
     - Named sequentially (e.g., 00000000.png, 00000001.png)
-    - Show rendered subtitle bitmap before DVB encoding
+    - Show rendered subtitle bitmap before dvb encoding
     - Useful for visual inspection of rendering quality
 
 9.4 Benchmark Results (with --bench)
@@ -778,7 +791,7 @@ Common codes include:
   • CLI parsing: getopt_long for argument handling
   • SRT parsing: Custom robust recursive descent parser (srt_parser.c)
   • Text rendering: Pango + Cairo for high-quality bitmap output
-  • DVB encoding: FFmpeg-integrated DVB subtitle encoder
+  • dvb encoding: FFmpeg-integrated dvb subtitle encoder
   • Multiplexing: Direct MPEG-TS mux with FFmpeg
   • Threading: Worker pool for parallel subtitle rendering
   • Queue: Lock-free queue for subtitle event batching
@@ -788,15 +801,15 @@ Common codes include:
   1. Parse SRT file (srt_parser.c) with robustness enhancements
   2. Validate subtitle timing and content
   3. Render text to intermediate bitmap (Pango/Cairo or libass)
-  4. Dither bitmap to DVB palette
-  5. Generate DVB subtitle segments (Page Composition Segment)
-  6. Encode into DVB subtitle packets
+  4. Dither bitmap to dvb palette
+  5. Generate dvb subtitle segments (Page Composition Segment)
+  6. Encode into dvb subtitle packets
   7. Multiplex into MPEG-TS output
 
 13.3 Video Stream Handling
   • Input: FFmpeg probes video dimensions and frame rate
   • Font scaling: Font size calculated from video resolution
-  • Output: MPEG-TS with video, audio, and DVB subtitle tracks
+  • Output: MPEG-TS with video, audio, and dvb subtitle tracks
   • Clock reference: PCR (Program Clock Reference) maintained
 
 13.4 Performance Optimizations

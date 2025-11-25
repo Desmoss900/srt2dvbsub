@@ -1,15 +1,17 @@
 # srt2dvbsub
 
-**Convert SRT Subtitles to DVB Subtitles in MPEG-TS**
+**Convert SRT Subtitles to dvb Subtitles in MPEG-TS**
 
-srt2dvbsub is an attempt at a professional command-line tool that converts SRT (SubRip) subtitle files into DVB (Digital Video Broadcasting) subtitle tracks and multiplexes them directly into MPEG-TS (Transport Stream) files.
+> **Disclaimer:** This project is an independent, open-source implementation with no affiliation with, endorsement from, or connection to the DVB Project or the DVB Organisation. The acronym "dvb" in this project refers exclusively to the dvb (Digital Video Broadcasting) technology standard as defined in relevant technical specifications. This tool implements the dvb subtitle specification for interoperability purposes only. Use of the term "dvb" is for technical reference and does not imply any official status or authorization from the DVB Organisation.
+
+srt2dvbsub is an attempt at a professional command-line tool that converts SRT (SubRip) subtitle files into dvb (Digital Video Broadcasting) subtitle tracks and multiplexes them directly into MPEG-TS (Transport Stream) files.
 
 ## Overview
 
-Essential for broadcasters, IPTV providers, and content distribution networks that need to deliver broadcast-compliant DVB subtitles embedded in transport streams. Replaces the need for expensive proprietary DVB authoring tools.
+Essential for broadcasters, IPTV providers, and content distribution networks that need to deliver broadcast-compliant dvb subtitles embedded in transport streams. Replaces the need for expensive proprietary dvb authoring tools.
 
 **Key Features:**
--  SRT to DVB subtitle conversion
+-  SRT to dvb subtitle conversion
 -  Multi-track subtitle support (up to 16 simultaneous tracks)
 -  Professional text-to-bitmap rendering (Pango/Cairo)
 -  Direct MPEG-TS multiplexing
@@ -78,7 +80,7 @@ srt2dvbsub --qc-only --srt subtitles.srt --languages eng
 -  SRT (SubRip) parsing with robustness enhancements
 -  ASS/SSA tag and rendering support (with `--ass` flag)
 -  Multi-track processing with independent settings
--  Per-track language codes (DVB 3-letter ISO codes)
+-  Per-track language codes (dvb 3-letter ISO codes)
 -  Per-track forced and hearing-impaired flags
 
 ### Text Rendering
@@ -89,9 +91,9 @@ srt2dvbsub --qc-only --srt subtitles.srt --languages eng
 -  Custom colors: foreground, outline, shadow, background
 -  Supersample anti-aliasing (SSAA) with configurable factors
 
-### DVB Subtitle Generation
+### dvb Subtitle Generation
 -  MPEG-TS multiplexing with original streams preserved
--  DVB Page Composition Segment generation
+-  dvb Page Composition Segment generation
 -  Palette modes: EBU broadcast, broadcast, greyscale
 -  Automatic dithering and color reduction
 -  Unsharp mask filter (optional)
@@ -114,7 +116,7 @@ srt2dvbsub --help
 -I, --input FILE          Input media file (MPEG-TS, MP4, MKV, etc.)
 -o, --output FILE         Output MPEG-TS file
 -s, --srt FILES           Comma-separated SRT files
--l, --languages CODES     Comma-separated DVB language codes (e.g., eng,deu,fra)
+-l, --languages CODES     Comma-separated dvb language codes (e.g., eng,deu,fra)
 ```
 
 ### Appearance Options
@@ -128,7 +130,7 @@ srt2dvbsub --help
 --sub-position PERCENT    Vertical position from bottom (0.0-50.0%, default: 5.0%)
 ```
 
-### DVB Options
+### dvb Options
 ```
 --palette MODE            Color palette: ebu-broadcast, broadcast, greyscale
 --ssaa N                  Anti-aliasing factor (1-24, default: 4)
@@ -161,8 +163,8 @@ srt2dvbsub --help
 
 ## Use Cases
 
-1. **IPTV/OTT Platforms**: Deliver broadcast-compliant DVB subtitles
-2. **Archive Digitization**: Convert text based subtitle formats to DVB subtitles
+1. **IPTV/OTT Platforms**: Deliver broadcast-compliant dvb subtitles
+2. **Archive Digitization**: Convert text based subtitle formats to dvb subtitles
 3. **Broadcast Mastering**: Multi-language subtitle preparation
 4. **Content Distribution**: Quality-controlled subtitle delivery
 5. **Automated Encoding**: Pipeline integration for batch processing

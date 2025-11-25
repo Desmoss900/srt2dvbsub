@@ -168,10 +168,10 @@ This intelligently selects appropriate fonts for different writing systems and l
     --auto-font-select --cjk-font "Noto Sans CJK" --arabic-font "Noto Sans Arabic"
 ```
 
-## 13. Regional DVB Compliance Profiles
-This ensures subtitle compliance with regional broadcasting standards and regulations. Different regions (UK, Nordic countries, Australia, etc.) have specific DVB requirements for subtitle encoding, color palettes, and metadata. The feature automates compliance checking and applies region-specific language defaults, reducing manual configuration and ensuring broadcast-ready output for target markets.
+## 13. Regional dvb Compliance Profiles
+This ensures subtitle compliance with regional broadcasting standards and regulations. Different regions (UK, Nordic countries, Australia, etc.) have specific dvb requirements for subtitle encoding, color palettes, and metadata. The feature automates compliance checking and applies region-specific language defaults, reducing manual configuration and ensuring broadcast-ready output for target markets.
 
-    - Different standards for different regions (UK DVB, Nordic DVB, etc.)
+    - Different standards for different regions (UK dvb, Nordic dvb, etc.)
     - Automatic compliance checking
     - Region-specific language defaults
 ```
@@ -248,9 +248,9 @@ This ensures subtitles avoid critical display areas where they might be obscured
 ```
 
 ## 19. Subtitle Watermarking and Fingerprinting
-This adds security and tracking capabilities to subtitle streams through embedded metadata. Watermarks and fingerprints are embedded in the DVB subtitle stream using user_data fields, allowing tracking of subtitle encoding sessions, versions, and timestamps. Copyright and attribution information can be embedded for content protection. This is valuable for managing content distribution rights and tracking subtitle origins.
+This adds security and tracking capabilities to subtitle streams through embedded metadata. Watermarks and fingerprints are embedded in the dvb subtitle stream using user_data fields, allowing tracking of subtitle encoding sessions, versions, and timestamps. Copyright and attribution information can be embedded for content protection. This is valuable for managing content distribution rights and tracking subtitle origins.
 
-    - Embed metadata in DVB subtitle stream (via user_data fields)
+    - Embed metadata in dvb subtitle stream (via user_data fields)
     - Track subtitle encoding session/timestamp
     - Version tracking information
     - Copyright/attribution information embedding
