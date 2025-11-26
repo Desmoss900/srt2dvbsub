@@ -271,35 +271,6 @@ static int finalize_main(struct MainCtx *ctx, bool ctx_cleaned, int ret)
  *       conform to the DVB 3-letter standard.
  */
 
-/**
- * Validate and parse subtitle position percentage.
- *
- * @param pos_str Input string (e.g., "3.8")
- * @param out_pct Pointer to store validated percentage
- * @return 0 on success, -1 on validation error
- */
-static int validate_sub_position(const char *pos_str, double *out_pct)
-{
-    if (!pos_str || !out_pct) return -1;
-    
-    char *endptr;
-    errno = 0;
-    double value = strtod(pos_str, &endptr);
-    
-    /* Check for conversion errors */
-    if (errno != 0 || endptr == pos_str || *endptr != '\0') {
-        return -1;
-    }
-    
-    /* Validate range: 0.0 to 50.0 percent */
-    if (value < 0.0 || value > 50.0) {
-        return -1;
-    }
-    
-    *out_pct = value;
-    return 0;
-}
-
 static int cli_parse(int argc, char **argv,
                           struct MainCtx *ctx,
                           const char **input,
@@ -314,7 +285,6 @@ static int cli_parse(int argc, char **argv,
                           int *subtitle_delay_ms,
                           char **subtitle_delay_list,
                           int *cli_fontsize,
-                          double *sub_position_pct,
                           const char **cli_font,
                           const char **cli_font_style,
                           const char **cli_fgcolor,
@@ -344,6 +314,10 @@ static int cli_parse(int argc, char **argv,
         {"font", required_argument, 0, 1007},
         {"fontsize", required_argument, 0, 1008},
         {"sub-position", required_argument, 0, 1022},
+        {"margin-top", required_argument, 0, 1026},
+        {"margin-left", required_argument, 0, 1027},
+        {"margin-bottom", required_argument, 0, 1028},
+        {"margin-right", required_argument, 0, 1029},
         {"fgcolor", required_argument, 0, 1009},
         {"outlinecolor", required_argument, 0, 1010},
         {"shadowcolor", required_argument, 0, 1011},
@@ -355,6 +329,9 @@ static int cli_parse(int argc, char **argv,
         {"no-unsharp", no_argument, 0, 1016},
         {"font-style", required_argument, 0, 1018},
         {"png-dir", required_argument, 0, 1020},
+        {"pid", required_argument, 0, 1023},
+        {"ts-bitrate", required_argument, 0, 1024},
+        {"png-only", no_argument, 0, 1025},
         {"license", no_argument, 0, 1017},
         {"help", no_argument, 0, 'h'},
         {"?", no_argument, 0, '?'},
@@ -362,6 +339,9 @@ static int cli_parse(int argc, char **argv,
 
     if (cli_font_style && ctx)
         ctx->cli_font_style = *cli_font_style;
+
+    /* Variables to track individual margin overrides */
+    double margin_top = -1.0, margin_left = -1.0, margin_bottom = -1.0, margin_right = -1.0;
 
     while ((opt = getopt_long(argc, argv, "I:o:s:l:h?", long_opts, &long_index)) != -1)
     {
@@ -477,10 +457,69 @@ static int cli_parse(int argc, char **argv,
             break;
         case 1022:
             {
-                if (validate_sub_position(optarg, sub_position_pct) != 0) {
-                    LOG(0, "Subtitle position validation error: must be a number between 0.0 and 50.0\n");
+                /* Store positioning specification for parsing later */
+                if (sub_position_spec) free(sub_position_spec);
+                sub_position_spec = strdup(optarg);
+                if (!sub_position_spec) {
+                    LOG(0, "Out of memory while setting subtitle position\n");
                     return 1;
                 }
+            }
+            break;
+        case 1026:
+            {
+                /* Parse margin-top */
+                char *endptr;
+                errno = 0;
+                double val = strtod(optarg, &endptr);
+                if (errno != 0 || endptr == optarg || *endptr != '\0' || val < 0.0 || val > 50.0) {
+                    LOG(0, "Invalid margin-top value: must be a number between 0.0 and 50.0\n");
+                    return 1;
+                }
+                margin_top = val;
+                LOG(2, "margin-top set to %.1f%%\n", val);
+            }
+            break;
+        case 1027:
+            {
+                /* Parse margin-left */
+                char *endptr;
+                errno = 0;
+                double val = strtod(optarg, &endptr);
+                if (errno != 0 || endptr == optarg || *endptr != '\0' || val < 0.0 || val > 50.0) {
+                    LOG(0, "Invalid margin-left value: must be a number between 0.0 and 50.0\n");
+                    return 1;
+                }
+                margin_left = val;
+                LOG(2, "margin-left set to %.1f%%\n", val);
+            }
+            break;
+        case 1028:
+            {
+                /* Parse margin-bottom */
+                char *endptr;
+                errno = 0;
+                double val = strtod(optarg, &endptr);
+                if (errno != 0 || endptr == optarg || *endptr != '\0' || val < 0.0 || val > 50.0) {
+                    LOG(0, "Invalid margin-bottom value: must be a number between 0.0 and 50.0\n");
+                    return 1;
+                }
+                margin_bottom = val;
+                LOG(2, "margin-bottom set to %.1f%%\n", val);
+            }
+            break;
+        case 1029:
+            {
+                /* Parse margin-right */
+                char *endptr;
+                errno = 0;
+                double val = strtod(optarg, &endptr);
+                if (errno != 0 || endptr == optarg || *endptr != '\0' || val < 0.0 || val > 50.0) {
+                    LOG(0, "Invalid margin-right value: must be a number between 0.0 and 50.0\n");
+                    return 1;
+                }
+                margin_right = val;
+                LOG(2, "margin-right set to %.1f%%\n", val);
             }
             break;
         case 1018:
@@ -635,12 +674,106 @@ static int cli_parse(int argc, char **argv,
                 LOG(1, "PNG output directory: %s\n", get_png_output_dir());
             }
             break;
+        case 1023:
+            {
+                pid_list = strdup(optarg);
+                if (!pid_list) {
+                    LOG(0, "Out of memory while setting PID list\n");
+                    return 1;
+                }
+            }
+            break;
+        case 1024:
+            {
+                /* Parse --ts-bitrate value */
+                char *endptr = NULL;
+                errno = 0;
+                long bitrate_val = strtol(optarg, &endptr, 10);
+                
+                /* Validate the bitrate value */
+                if (errno != 0 || endptr == optarg || *endptr != '\0' || bitrate_val <= 0) {
+                    LOG(0, "Invalid bitrate value '%s': must be a positive integer (bits per second)\n", optarg);
+                    LOG(0, "Example: --ts-bitrate 12000000 (for 12 Mbps)\n");
+                    return 1;
+                }
+                
+                /* Additional validation: reasonable bitrate range (100 kbps to 1 Gbps) */
+                if (bitrate_val < 100000 || bitrate_val > 1000000000LL) {
+                    LOG(0, "Bitrate %ld is outside reasonable range (100,000 to 1,000,000,000 bps)\n", bitrate_val);
+                    return 1;
+                }
+                
+                ts_bitrate = (int64_t)bitrate_val;
+                if (debug_level > 0) {
+                    LOG(1, "Set custom MPEG-TS bitrate to %" PRId64 " bps (%.2f Mbps)\n",
+                        ts_bitrate, ts_bitrate / 1000000.0);
+                }
+            }
+            break;
+        case 1025:
+            png_only = 1;
+            if (debug_level > 0) {
+                LOG(1, "Enabled PNG-only mode (no MPEG-TS output, subtitles will be saved as PNG files)\n");
+            }
+            break;
         case 1017:
             print_license();
             return 0;
         default:
             print_help();
             return 1;
+        }
+    }
+
+    /* Build positioning spec string with margin overrides if any were provided */
+    if (margin_top >= 0.0 || margin_left >= 0.0 || margin_bottom >= 0.0 || margin_right >= 0.0) {
+        /* If no position spec yet, use default bottom-center */
+        if (!sub_position_spec) {
+            sub_position_spec = strdup("bottom-center");
+            if (!sub_position_spec) {
+                LOG(0, "Out of memory while building positioning spec\n");
+                return 1;
+            }
+        }
+        
+        /* Build margin suffix for spec (max ~64 chars: "margin_top,margin_left,margin_bottom,margin_right") */
+        char margin_str[128] = {0};
+        snprintf(margin_str, sizeof(margin_str), ",%s%s%s%s",
+                 margin_top >= 0.0 ? "skip" : "",     /* placeholder - will replace with actual values */
+                 margin_left >= 0.0 ? "skip" : "",
+                 margin_bottom >= 0.0 ? "skip" : "",
+                 margin_right >= 0.0 ? "skip" : "");
+        
+        /* Actually, let's build it properly with the actual margin values */
+        if (margin_top >= 0.0 || margin_left >= 0.0 || margin_bottom >= 0.0 || margin_right >= 0.0) {
+            char *new_spec = NULL;
+            size_t spec_len = strlen(sub_position_spec) + 256;
+            new_spec = malloc(spec_len);
+            if (!new_spec) {
+                LOG(0, "Out of memory while building positioning spec with margins\n");
+                return 1;
+            }
+            
+            snprintf(new_spec, spec_len, "%s",  sub_position_spec);
+            
+            /* Append margins if any were specified */
+            if (margin_top >= 0.0 || margin_left >= 0.0 || margin_bottom >= 0.0 || margin_right >= 0.0) {
+                /* Use provided margins, fill defaults where not specified */
+                double mt = margin_top >= 0.0 ? margin_top : 3.5;
+                double ml = margin_left >= 0.0 ? margin_left : 3.5;
+                double mb = margin_bottom >= 0.0 ? margin_bottom : 3.5;
+                double mr = margin_right >= 0.0 ? margin_right : 3.5;
+                
+                char margin_suffix[200];
+                snprintf(margin_suffix, sizeof(margin_suffix), ",%.1f,%.1f,%.1f,%.1f", mt, ml, mb, mr);
+                strncat(new_spec, margin_suffix, spec_len - strlen(new_spec) - 1);
+            }
+            
+            free(sub_position_spec);
+            sub_position_spec = new_spec;
+            if (*debug_level > 0) {
+                LOG(1, "Positioning spec with margins: %s\n", sub_position_spec);
+            }
         }
     }
 
@@ -750,6 +883,13 @@ static int ctx_init(struct MainCtx *ctx,
     AVFormatContext *in_fmt = NULL;
     AVDictionary *fmt_opts = NULL;
     av_dict_set(&fmt_opts, "buffer_size", "10485760", 0); /* 10 MiB read buffer */
+    /* Enhanced probe settings for more accurate bitrate detection:
+     * - probesize: Increased to 10 MiB for better stream analysis
+     * - max_analyze_duration: Increased to 30 seconds for longer duration analysis
+     * These help detect accurate bitrate for high-bitrate content.
+     */
+    av_dict_set(&fmt_opts, "probesize", "10485760", 0); /* 10 MiB probe buffer */
+    av_dict_set(&fmt_opts, "max_analyze_duration", "30000000", 0); /* 30 seconds in microseconds */
     if (avformat_open_input(&in_fmt, input, NULL, &fmt_opts) < 0) {
         av_dict_free(&fmt_opts);
         LOG(0, "Cannot open input file '%s': file not found or unsupported format\n", input);
@@ -998,11 +1138,147 @@ static int parse_flag_list(const char *flag_str, int track_count, int *flags, in
     return 0;
 }
 
+/**
+ * apply_custom_pids: Assign custom PIDs to subtitle streams if specified.
+ *
+ * Parses the PID list string and assigns PIDs to subtitle tracks.
+ * Supports single value (auto-increment) or comma-separated explicit values.
+ *
+ * Returns 0 on success, non-zero on error (invalid PID, conflicts, etc.)
+ */
+static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), int ntracks,
+                              AVFormatContext *out_fmt,
+                              const char *pid_str,
+                              char *errmsg)
+{
+    if (!pid_str || *pid_str == '\0') {
+        /* No custom PIDs specified; use defaults */
+        return 0;
+    }
+
+    int *pids = NULL;
+    int pid_count = 0;
+
+    /* Parse PID list */
+    int parse_ret = parse_pid_list(pid_str, &pids, &pid_count, errmsg);
+    if (parse_ret != 0) {
+        free(pids);
+        return parse_ret;
+    }
+
+    /* Check for conflicts with existing PIDs in the stream */
+    int *pids_to_assign = NULL;
+    if (pid_count == 1) {
+        /* Single PID: auto-increment for each track */
+        if (pids[0] + ntracks > 8186) {
+            snprintf(errmsg, 256, "Auto-increment from PID %d would exceed maximum (8186)", pids[0]);
+            free(pids);
+            return 1;
+        }
+        pids_to_assign = malloc(ntracks * sizeof(int));
+        if (!pids_to_assign) {
+            snprintf(errmsg, 256, "Out of memory");
+            free(pids);
+            return -1;
+        }
+        for (int i = 0; i < ntracks; i++) {
+            pids_to_assign[i] = pids[0] + i;
+        }
+    } else if (pid_count == ntracks) {
+        /* Explicit PIDs for each track */
+        pids_to_assign = pids;
+    } else {
+        snprintf(errmsg, 256, "PID count (%d) must match track count (%d) or be a single value for auto-increment",
+                 pid_count, ntracks);
+        free(pids);
+        return 1;
+    }
+
+    /* Check for conflicts with existing PIDs in the format context */
+    for (unsigned int i = 0; i < out_fmt->nb_streams; i++) {
+        AVStream *st = out_fmt->streams[i];
+        /* Check if this is NOT one of the subtitle tracks we're about to assign */
+        int is_subtitle_track = 0;
+        if ((int)i >= (int)out_fmt->nb_streams - ntracks) {
+            is_subtitle_track = 1;
+        }
+        
+        if (!is_subtitle_track && st->id > 0) {
+            /* This is an existing stream (audio/video), check for conflicts */
+            for (int j = 0; j < ntracks; j++) {
+                if (pids_to_assign[j] == st->id) {
+                    snprintf(errmsg, 256, "PID %d is already in use by an existing audio or video stream", pids_to_assign[j]);
+                    if (pid_count == 1) free(pids_to_assign);
+                    free(pids);
+                    return 1;
+                }
+            }
+        }
+    }
+
+    /* Assign the PIDs to subtitle tracks */
+    for (int i = 0; i < ntracks; i++) {
+        int track_stream_idx = out_fmt->nb_streams - ntracks + i;
+        if (track_stream_idx >= 0 && track_stream_idx < (int)out_fmt->nb_streams) {
+            AVStream *st = out_fmt->streams[track_stream_idx];
+            st->id = pids_to_assign[i];
+            if (debug_level > 0) {
+                LOG(1, "Assigned PID %d to track %d stream index %d\n",
+                    pids_to_assign[i], i, track_stream_idx);
+            }
+        }
+    }
+
+    if (pid_count == 1) free(pids_to_assign);
+    free(pids);
+
+    return 0;
+}
+
 /*
- * ctx_parse_tracks: process tokenized SRT/lang lists, parse SRT files or
- * inject ASS events (when enabled), create output streams and open encoders.
- * On allocation or runtime failures the helper calls ctx_cleanup(ctx)
- * and returns non-zero.
+ * Parse and initialize subtitle tracks from SRT files with optional libass rendering.
+ *
+ * This function processes comma-separated lists of SRT file paths and language codes,
+ * creating subtitle track structures with parsed subtitle entries. It handles both
+ * basic SRT parsing and advanced ASS (Advanced SubStation Alpha) rendering via libass.
+ *
+ * For each track, it:
+ * - Validates language codes (must be exactly 3 characters)
+ * - Parses SRT files with configurable robustness settings
+ * - Initializes libass renderer if ASS mode is enabled
+ * - Converts SRT HTML tags to ASS format when using libass
+ * - Creates FFmpeg output streams and configures DVB subtitle encoders
+ * - Applies per-track delays, forced/hearing-impaired flags, and style settings
+ *
+ * Parameters:
+ *   ctx              - Main context containing libass library, renderer, and delay values
+ *   tracks           - Array of SubTrack structures to populate (max 8 tracks)
+ *   ntracks          - Pointer to track counter, incremented for each added track
+ *   tok              - Current SRT file path token (from strtok_r)
+ *   tok_lang         - Current language code token (from strtok_r)
+ *   save_srt         - Saved state pointer for SRT file path tokenization
+ *   save_lang        - Saved state pointer for language code tokenization
+ *   delay_count      - Number of elements in ctx->delay_vals array
+ *   subtitle_delay_ms - Default subtitle delay in milliseconds
+ *   debug_level      - Verbosity level for debug logging
+ *   video_w, video_h - Video dimensions for subtitle rendering
+ *   codec            - FFmpeg subtitle codec (DVB_SUBTITLE)
+ *   forced_flags     - Array of forced subtitle flags per track
+ *   hi_flags         - Array of hearing-impaired flags per track
+ *   use_ass          - Enable libass rendering when non-zero
+ *   bench_mode       - Enable performance benchmarking when non-zero
+ *   qc               - Quality control file handle for parser output
+ *   cli_fontsize     - Font size for ASS rendering
+ *   cli_font         - Font name for ASS rendering
+ *   cli_font_style   - Font style for ASS rendering (processed during render)
+ *   cli_fgcolor      - Foreground color for ASS rendering
+ *   cli_outlinecolor - Outline color for ASS rendering
+ *   cli_shadowcolor  - Shadow color for ASS rendering
+ *   enc_threads      - Number of encoder threads (auto-detected if <= 0)
+ *
+ * Returns:
+ *   0 on success, -1 on initialization failure, 1 on file parsing or allocation failure
+ *   On failure, calls ctx_cleanup to release partially-initialized resources
  */
 static int ctx_parse_tracks(struct MainCtx *ctx,
                                  SubTrack tracks[],
@@ -1260,7 +1536,6 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
         tok = strtok_r(NULL, ",", save_srt);
         tok_lang = strtok_r(NULL, ",", save_lang);
     }
-#pragma GCC diagnostic pop
     return 0;
 }
 
@@ -1428,8 +1703,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                          cli_fontsize, cli_font,
                                                          cli_font_style,
                                                          cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
-                                                         used_align,
-                                                         sub_position_pct,
+                                                         &sub_pos_configs[t],
                                                          palette_mode);
                         }
                         else
@@ -1449,6 +1723,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                          cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
                                                          used_align,
                                                          sub_position_pct,
+                                                         &sub_pos_configs[t],
                                                          palette_mode);
                                 free(pm);
                             }
@@ -1463,8 +1738,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                              cli_fontsize, cli_font,
                                                              cli_font_style,
                                                              cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
-                                                             used_align,
-                                                             sub_position_pct,
+                                                             &sub_pos_configs[t],
                                                              palette_mode);
                             }
                         }
@@ -1476,8 +1750,7 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                cli_fontsize, cli_font,
                                                cli_font_style,
                                                cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
-                                               used_align,
-                                               sub_position_pct,
+                                               &sub_pos_configs[t],
                                                palette_mode);
                     }
                     if (bench_mode)
@@ -1506,14 +1779,18 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
 
                 int track_delay_ms = tracks[t].effective_delay_ms;
                 char pngfn[PATH_MAX] = "";
-                if (debug_level > 1)
+                if (png_only || debug_level > 1)
                 {
                     if (make_png_filename(pngfn, sizeof(pngfn), __srt_png_seq++, t, tracks[t].cur_sub) == 0) {
                         save_bitmap_png(&bm, pngfn);
-                        LOG(2, "[png] SRT bitmap saved: %s (x=%d y=%d w=%d h=%d)\n", pngfn, bm.x, bm.y, bm.w, bm.h);
+                        if (debug_level > 1) {
+                            LOG(2, "[png] SRT bitmap saved: %s (x=%d y=%d w=%d h=%d)\n", pngfn, bm.x, bm.y, bm.w, bm.h);
+                        }
                     }
-                    if (tracks[t].cur_sub < tracks[t].count && tracks[t].entries[tracks[t].cur_sub].text) {
-                        LOG(2, "[png] cue idx=%d text='%s'\n", tracks[t].cur_sub, tracks[t].entries[tracks[t].cur_sub].text);
+                    if (debug_level > 1) {
+                        if (tracks[t].cur_sub < tracks[t].count && tracks[t].entries[tracks[t].cur_sub].text) {
+                            LOG(2, "[png] cue idx=%d text='%s'\n", tracks[t].cur_sub, tracks[t].entries[tracks[t].cur_sub].text);
+                        }
                     }
                 }
                 if (debug_level > 0) {
@@ -1538,18 +1815,20 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                         LOG(1, "[dbg] encoding track=%d cue=%d pts90=%lld (ms=%lld)\n", t, tracks[t].cur_sub, (long long)pts90, (long long)(pts90/90));
                     }
 
-                    encode_and_write_subtitle(tracks[t].codec_ctx,
-                                              out_fmt,
-                                              &tracks[t],
-                                              sub,
-                                              pts90,
-                                              bench_mode,
-                                              (debug_level > 1 ? pngfn : NULL));
+                    /* Skip DVB subtitle encoding in PNG-only mode */
+                    if (!png_only) {
+                        encode_and_write_subtitle(tracks[t].codec_ctx,
+                                                  out_fmt,
+                                                  &tracks[t],
+                                                  sub,
+                                                  pts90,
+                                                  bench_mode,
+                                                  (debug_level > 1 ? pngfn : NULL));
+                    }
 
                     subs_emitted++;
                     if (debug_level > 1)
                     {
-                        LOG(2, "[png] SRT bitmap saved: %s\n", pngfn);
                         LOG(2, "[subs] Cue %d on %s: PTS=%lld ms, dur=%d ms, delay=%d ms\n",
                                tracks[t].cur_sub,
                                tracks[t].filename,
@@ -1586,13 +1865,16 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                                                               track_delay_ms) *
                                                              90);
 
-                    encode_and_write_subtitle(tracks[t].codec_ctx,
-                                              out_fmt,
-                                              &tracks[t],
-                                              clr,
-                                              clr_pts90,
-                                              bench_mode,
-                                              NULL);
+                    /* Skip DVB subtitle encoding in PNG-only mode */
+                    if (!png_only) {
+                        encode_and_write_subtitle(tracks[t].codec_ctx,
+                                                  out_fmt,
+                                                  &tracks[t],
+                                                  clr,
+                                                  clr_pts90,
+                                                  bench_mode,
+                                                  NULL);
+                    }
 
                     if (debug_level > 0)
                     {
@@ -1612,22 +1894,26 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
 
         if (pkt->stream_index >= 0 && pkt->stream_index < (int)in_fmt->nb_streams)
         {
-            AVStream *out_st = out_fmt->streams[pkt->stream_index];
-            if (!out_st) {
-                LOG(2, "output stream %d is NULL, skipping packet\n", pkt->stream_index);
-                av_packet_unref(pkt);
-                continue;
-            }
-            pkt->stream_index = out_st->index;
-
-            int64_t t5 = bench_now();
-            int mux_ret = safe_av_interleaved_write_frame(out_fmt, pkt);
-            if (bench_mode)
+            /* Skip writing packets to output file if PNG-only mode is enabled */
+            if (!png_only)
             {
-                int64_t delta_mux = bench_now() - t5;
-                bench_add_mux_us(delta_mux);
-                if (mux_ret >= 0)
-                    bench_inc_packets_muxed();
+                AVStream *out_st = out_fmt->streams[pkt->stream_index];
+                if (!out_st) {
+                    LOG(2, "output stream %d is NULL, skipping packet\n", pkt->stream_index);
+                    av_packet_unref(pkt);
+                    continue;
+                }
+                pkt->stream_index = out_st->index;
+
+                int64_t t5 = bench_now();
+                int mux_ret = safe_av_interleaved_write_frame(out_fmt, pkt);
+                if (bench_mode)
+                {
+                    int64_t delta_mux = bench_now() - t5;
+                    bench_add_mux_us(delta_mux);
+                    if (mux_ret >= 0)
+                        bench_inc_packets_muxed();
+                }
             }
         }
         av_packet_unref(pkt);
@@ -2335,7 +2621,6 @@ int main(int argc, char **argv)
                                       &subtitle_delay_ms,
                                       &subtitle_delay_list,
                                       &cli_fontsize,
-                                      &sub_position_pct,
                                       &cli_font,
                                       &cli_font_style,
                                       &cli_fgcolor,
@@ -2346,6 +2631,25 @@ int main(int argc, char **argv)
                                       &use_ass);
     if (parse_status >= 0)
         return finalize_main(&ctx, ctx_cleaned, parse_status);
+
+    /*
+     * Parse subtitle positioning specification if provided.
+     * Format: "position[,margin_top,margin_left,margin_bottom,margin_right];..."
+     * Example: "bottom-center,5.0" or "top-left,3.0,2.0;bottom-center"
+     */
+    if (sub_position_spec) {
+        char errmsg[256];
+        int ret = parse_subtitle_positions(sub_position_spec, sub_pos_configs, 8, errmsg);
+        if (ret != 0) {
+            LOG(0, "Failed to parse subtitle positioning: %s\n", errmsg);
+            ret = 1;
+            ctx_cleanup(&ctx);
+            return finalize_main(&ctx, ctx_cleaned, ret);
+        }
+        if (debug_level > 0) {
+            LOG(1, "Subtitle positioning configured: %s\n", sub_position_spec);
+        }
+    }
 
     /*
      * Configure libav logging verbosity to match our --debug level. We map
@@ -2523,6 +2827,18 @@ int main(int argc, char **argv)
         return ret;
     }
 
+    /* Apply custom PIDs to subtitle streams if specified */
+    if (pid_list) {
+        char pid_err[256] = {0};
+        int pid_ret = apply_custom_pids(tracks, ntracks, ctx.out_fmt, pid_list, pid_err);
+        if (pid_ret != 0) {
+            LOG(0, "PID assignment error: %s\n", pid_err);
+            ctx_cleanup(&ctx);
+            ctx_cleaned = true;
+            return pid_ret;
+        }
+    }
+
     /* Parse per-track forced/hi flags from CLI context now that we know ntracks */
     LOG(2, "DEBUG: After ctx_parse_tracks: ntracks=%d, ctx.cli_forced_list=%s, ctx.cli_hi_list=%s\n", 
         ntracks, ctx.cli_forced_list ? ctx.cli_forced_list : "(null)", 
@@ -2567,13 +2883,25 @@ int main(int argc, char **argv)
 
     /* Open the output file (unless the muxer uses I/O callbacks). This
      * step creates the output AVIO context used by avformat to write
-     * packets. We fail early if the file cannot be created. */
-    if (!(out_fmt->oformat->flags & AVFMT_NOFILE))
+     * packets. We fail early if the file cannot be created.
+     * 
+     * PNG-only mode skips this: no MPEG-TS file is created.
+     */
+    if (!png_only)
     {
-        if (avio_open(&out_fmt->pb, output, AVIO_FLAG_WRITE) < 0)
+        if (!(out_fmt->oformat->flags & AVFMT_NOFILE))
         {
-            LOG(1, "Error: could not open output file %s\n", output);
-            return finalize_main(&ctx, ctx_cleaned, -1);
+            if (avio_open(&out_fmt->pb, output, AVIO_FLAG_WRITE) < 0)
+            {
+                LOG(1, "Error: could not open output file %s\n", output);
+                return finalize_main(&ctx, ctx_cleaned, -1);
+            }
+        }
+    }
+    else
+    {
+        if (debug_level > 0) {
+            LOG(1, "PNG-only mode enabled: MPEG-TS file will not be created\n");
         }
     }
 
@@ -2593,12 +2921,26 @@ int main(int argc, char **argv)
     av_dict_set(&mux_opts, "copyts", "1", 0);
     av_dict_set(&mux_opts, "start_at_zero", "1", 0);
 
-    if (ctx.mux_rate > 0)
+    /* Determine muxrate: use ts_bitrate override if specified, otherwise use auto-detected rate */
+    int64_t final_mux_rate = ts_bitrate > 0 ? ts_bitrate : ctx.mux_rate;
+    
+    if (final_mux_rate > 0)
     {
         char muxrate_buf[32];
-        snprintf(muxrate_buf, sizeof(muxrate_buf), "%lld", (long long)ctx.mux_rate);
+        snprintf(muxrate_buf, sizeof(muxrate_buf), "%lld", (long long)final_mux_rate);
         av_dict_set(&mux_opts, "muxrate", muxrate_buf, 0);
+        if (debug_level > 0) {
+            if (ts_bitrate > 0) {
+                LOG(1, "Using custom muxrate %" PRId64 " bps (user-specified via --ts-bitrate)\n", final_mux_rate);
+            } else {
+                LOG(1, "Using auto-detected muxrate %" PRId64 " bps from input file\n", final_mux_rate);
+            }
+        }
     }
+    else if (debug_level > 0) {
+        LOG(1, "No muxrate specified; libav will auto-calculate based on stream requirements\n");
+    }
+    
     if (ctx.service_name)
         av_dict_set(&mux_opts, "service_name", ctx.service_name, 0);
     if (ctx.service_provider)
@@ -2606,12 +2948,17 @@ int main(int argc, char **argv)
 
     /* Write the container header. This emits stream headers for the output
      * format and must succeed before we attempt to write interleaved packets.
+     * 
+     * PNG-only mode skips header writing: no packets are written to output.
      */
-    if (avformat_write_header(out_fmt, &mux_opts) < 0)
+    if (!png_only)
     {
-        LOG(1, "Error: could not write header for output file\n");
-        av_dict_free(&mux_opts);
-        return finalize_main(&ctx, ctx_cleaned, -1);
+        if (avformat_write_header(out_fmt, &mux_opts) < 0)
+        {
+            LOG(1, "Error: could not write header for output file\n");
+            av_dict_free(&mux_opts);
+            return finalize_main(&ctx, ctx_cleaned, -1);
+        }
     }
 
     /*
@@ -2650,8 +2997,16 @@ int main(int argc, char **argv)
      * specific trailer information (indexes, timestamps) required by the
      * container. After this call the output file is logically complete and
      * no further packets should be written.
+     * 
+     * PNG-only mode skips trailer: no MPEG-TS file is produced.
      */
-    av_write_trailer(out_fmt);
+    if (!png_only) {
+        av_write_trailer(out_fmt);
+    } else {
+        if (debug_level > 0 || !qc_only) {
+            printf("PNG-only rendering complete. Rendered subtitles have been saved to: %s\n", get_png_output_dir());
+        }
+    }
 
     return finalize_main(&ctx, ctx_cleaned, ret);
 }

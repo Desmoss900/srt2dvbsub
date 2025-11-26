@@ -52,6 +52,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "runtime_opts.h"
 
 /**
  * @file render_pango.h
@@ -97,7 +98,7 @@ typedef struct {
  * @param fgcolor       Foreground color string in "#RRGGBB" or "#AARRGGBB" form.
  * @param outlinecolor  Outline/stroke color string.
  * @param shadowcolor   Shadow color string.
- * @param align_code    Alignment code (1..9 similar to ASS alignment).
+ * @param pos_config    Positioning configuration with position (1-9) and margins. If NULL, uses default.
  * @param palette_mode  Palette hint forwarded to init_palette() (e.g., "broadcast").
  * @return Bitmap with allocated idxbuf and palette on success. Caller must free both.
  */
@@ -109,8 +110,7 @@ Bitmap render_text_pango(const char *markup,
                          const char *outlinecolor,
                          const char *shadowcolor,
                          const char *bgcolor,
-                         int align_code,
-                         double sub_position_pct,
+                         SubtitlePositionConfig *pos_config,
                          const char *palette_mode);
 
 /**

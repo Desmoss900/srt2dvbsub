@@ -50,6 +50,7 @@
 #include "render_pango.h"
 #include "palette.h"
 #include "debug.h"
+#include "utils.h"
 #include <cairo.h>
 #include <pango/pangocairo.h>
 #include <stdlib.h>
@@ -571,7 +572,9 @@ char* srt_to_pango_markup(const char *srt_text) {
  *  - surface: Final Cairo surface to destroy
  */
 static void cleanup_render_resources(bool success, Bitmap *bm,
-                                     int text_x, int text_y, int w, int h, int pad,
+                                     int w, int h,
+                                     int disp_w, int disp_h,
+                                     SubtitlePositionConfig *pos_config,
                                      PangoFontDescription *desc,
                                      PangoLayout *layout_dummy,
                                      PangoContext *ctx_dummy,
@@ -584,8 +587,62 @@ static void cleanup_render_resources(bool success, Bitmap *bm,
                                      cairo_surface_t *surface)
 {
     if (success) {
-        bm->x = text_x - pad;
-        bm->y = text_y - pad;
+        /* Calculate final bitmap position based on positioning config with margins */
+        int bm_x = 0, bm_y = 0;
+        
+        if (pos_config) {
+            LOG(2, "DEBUG cleanup: pos_config position=%d, margins: top=%.1f left=%.1f bottom=%.1f right=%.1f\n",
+                pos_config->position, pos_config->margin_top, pos_config->margin_left, 
+                pos_config->margin_bottom, pos_config->margin_right);
+            
+            int margin_top_px = (int)(disp_h * pos_config->margin_top / 100.0);
+            int margin_left_px = (int)(disp_w * pos_config->margin_left / 100.0);
+            int margin_bottom_px = (int)(disp_h * pos_config->margin_bottom / 100.0);
+            int margin_right_px = (int)(disp_w * pos_config->margin_right / 100.0);
+            
+            /* Calculate X position: margins affect all positions including center */
+            if (pos_config->position == SUB_POS_TOP_LEFT || pos_config->position == SUB_POS_MID_LEFT || pos_config->position == SUB_POS_BOT_LEFT) {
+                /* Left position: place at left margin */
+                bm_x = margin_left_px;
+            } else if (pos_config->position == SUB_POS_TOP_RIGHT || pos_config->position == SUB_POS_MID_RIGHT || pos_config->position == SUB_POS_BOT_RIGHT) {
+                /* Right position: place at right margin from edge */
+                bm_x = disp_w - w - margin_right_px;
+            } else {
+                /* Center position: center with net margin offset (left-right) */
+                int margin_net_x = margin_left_px - margin_right_px;
+                bm_x = (disp_w - w) / 2 + margin_net_x / 2;
+            }
+            
+            /* Calculate Y position: margins affect all positions including center */
+            if (pos_config->position == SUB_POS_TOP_LEFT || pos_config->position == SUB_POS_TOP_CENTER || pos_config->position == SUB_POS_TOP_RIGHT) {
+                /* Top position: place at top margin */
+                bm_y = margin_top_px;
+            } else if (pos_config->position == SUB_POS_MID_LEFT || pos_config->position == SUB_POS_MID_CENTER || pos_config->position == SUB_POS_MID_RIGHT) {
+                /* Middle position: center with net margin offset (top-bottom) */
+                int margin_net_y = margin_top_px - margin_bottom_px;
+                bm_y = (disp_h - h) / 2 + margin_net_y / 2;
+            } else {
+                /* Bottom position: place at bottom margin from edge */
+                bm_y = disp_h - h - margin_bottom_px;
+            }
+        } else {
+            /* Fallback to center if no config */
+            LOG(2, "DEBUG cleanup: pos_config is NULL, using center fallback\n");
+            bm_x = (disp_w - w) / 2;
+            bm_y = (disp_h - h) / 2;
+        }
+        
+        /* Clamp to canvas bounds */
+        if (bm_x < 0) bm_x = 0;
+        if (bm_y < 0) bm_y = 0;
+        if (bm_x + w > disp_w) bm_x = disp_w - w;
+        if (bm_y + h > disp_h) bm_y = disp_h - h;
+        
+        LOG(2, "DEBUG cleanup: Final bitmap position: x=%d y=%d w=%d h=%d (disp %dx%d)\n", 
+            bm_x, bm_y, w, h, disp_w, disp_h);
+        
+        bm->x = bm_x;
+        bm->y = bm_y;
         bm->w = w;
         bm->h = h;
     }
@@ -639,8 +696,7 @@ Bitmap render_text_pango(const char *markup,
                           const char *outlinecolor,
                           const char *shadowcolor,
                           const char *bgcolor,
-                          int align_code,
-                          double sub_position_pct,
+                          SubtitlePositionConfig *pos_config,
                           const char *palette_mode) {
     Bitmap bm={0};
     
@@ -735,7 +791,7 @@ Bitmap render_text_pango(const char *markup,
     if (!desc) {
         desc = pango_font_description_new();
         if (!desc) {
-            cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+            cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                     desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                     layout_real, ctx_real, cr, surface_ss, surface);
             return bm;
@@ -749,24 +805,41 @@ Bitmap render_text_pango(const char *markup,
     
     free(desc_string);
 
+    /* --- Check for ASS alignment override in markup ({\an<digit>}) ---
+     * Must use a mutable copy since extract_ass_alignment modifies the string.
+     * This also removes the {\an<digit>} tag from the markup before rendering. */
+    char *markup_copy = malloc(strlen(markup) + 1);
+    if (!markup_copy) {
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
+                                desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
+                                layout_real, ctx_real, cr, surface_ss, surface);
+        return bm;
+    }
+    strcpy(markup_copy, markup);
+    
+    SubtitlePositionConfig *ass_config = extract_ass_alignment(markup_copy);
+    
+    /* Use the cleaned markup (with ASS tag removed) for further processing */
+    const char *final_markup = markup_copy;
+
     /* --- Dummy layout for measurement --- */
     dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     if (!dummy || cairo_surface_status(dummy) != CAIRO_STATUS_SUCCESS) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
     }
     cr_dummy = cairo_create(dummy);
     if (!cr_dummy || cairo_status(cr_dummy) != CAIRO_STATUS_SUCCESS) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
     }
     ctx_dummy = pango_font_map_create_context(thread_fm);
     if (!ctx_dummy) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -787,7 +860,7 @@ Bitmap render_text_pango(const char *markup,
     
     layout_dummy = pango_layout_new(ctx_dummy);
     if (!layout_dummy) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -795,8 +868,8 @@ Bitmap render_text_pango(const char *markup,
     pango_layout_set_font_description(layout_dummy, desc);
     pango_layout_set_width(layout_dummy, disp_w * 0.8 * PANGO_SCALE);
     pango_layout_set_wrap(layout_dummy, PANGO_WRAP_WORD_CHAR);
-    pango_layout_set_alignment(layout_dummy, PANGO_ALIGN_CENTER);
-    pango_layout_set_markup(layout_dummy, markup, -1);
+    /* Alignment will be set after final_config is determined (see below) */
+    pango_layout_set_markup(layout_dummy, final_markup, -1);
 
     int lw, lh;
 
@@ -814,16 +887,42 @@ Bitmap render_text_pango(const char *markup,
      * so center alignment works properly without extra padding on the sides */
     int layout_width_for_real = lw;
 
-    /* --- Placement in full frame --- */
-    /* Convert percentage to decimal (e.g., 3.8% -> 0.038)
-     * This represents gap from bottom: higher value = gap is larger = text moves UP */
-    double pos_decimal = sub_position_pct / 100.0;
-    LOG(1, "POSITION_DEBUG: sub_position_pct=%.1f, pos_decimal=%.4f, disp_h=%d\n", sub_position_pct, pos_decimal, disp_h);
-    int text_x = (disp_w - lw) / 2;
-    int text_y = disp_h - (int)(disp_h * pos_decimal) - lh;
-    LOG(1, "POSITION_DEBUG: calculated text_y=%d, lh=%d, final_y will be: %d\n", text_y, lh, text_y);
-    if (align_code >= 7) text_y = (int)(disp_h * pos_decimal);
-    else if (align_code >= 4 && align_code <= 6) text_y = (disp_h - lh) / 2;
+    /* --- Placement in full frame ---
+     * Use 9-position grid positioning from config. Default to bottom-center if no config provided.
+     */
+    SubtitlePositionConfig default_config = {
+        .position = SUB_POS_BOT_CENTER,
+        .margin_top = 3.5,
+        .margin_left = 3.5,
+        .margin_bottom = 3.5,
+        .margin_right = 3.5
+    };
+    
+    SubtitlePositionConfig *final_config = ass_config ? ass_config : (pos_config ? pos_config : &default_config);
+
+    /* Determine text alignment within bounding box based on horizontal position */
+    PangoAlignment text_alignment = PANGO_ALIGN_CENTER;
+    switch (final_config->position) {
+        case SUB_POS_TOP_LEFT:
+        case SUB_POS_MID_LEFT:
+        case SUB_POS_BOT_LEFT:
+            text_alignment = PANGO_ALIGN_LEFT;
+            break;
+        case SUB_POS_TOP_RIGHT:
+        case SUB_POS_MID_RIGHT:
+        case SUB_POS_BOT_RIGHT:
+            text_alignment = PANGO_ALIGN_RIGHT;
+            break;
+        case SUB_POS_TOP_CENTER:
+        case SUB_POS_MID_CENTER:
+        case SUB_POS_BOT_CENTER:
+        default:
+            text_alignment = PANGO_ALIGN_CENTER;
+            break;
+    }
+    
+    /* Now apply alignment to layout_dummy (was deferred earlier) */
+    pango_layout_set_alignment(layout_dummy, text_alignment);
 
     /* --- Adaptive supersampled rendering surface ---
      * Choose supersample factor based on display height.
@@ -850,14 +949,14 @@ Bitmap render_text_pango(const char *markup,
     int ss_h = (lh + 2*pad) * ss;
     surface_ss = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ss_w, ss_h);
     if (!surface_ss || cairo_surface_status(surface_ss) != CAIRO_STATUS_SUCCESS) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
     }
     cr = cairo_create(surface_ss);
     if (!cr || cairo_status(cr) != CAIRO_STATUS_SUCCESS) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -867,7 +966,7 @@ Bitmap render_text_pango(const char *markup,
 
     ctx_real = pango_font_map_create_context(thread_fm);
     if (!ctx_real) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -889,7 +988,7 @@ Bitmap render_text_pango(const char *markup,
     cairo_font_options_destroy(fopt);
     layout_real = pango_layout_new(ctx_real);
     if (!layout_real) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -897,8 +996,8 @@ Bitmap render_text_pango(const char *markup,
     pango_layout_set_font_description(layout_real, desc);
     pango_layout_set_width(layout_real, layout_width_for_real * PANGO_SCALE);
     pango_layout_set_wrap(layout_real, PANGO_WRAP_WORD_CHAR);
-    pango_layout_set_alignment(layout_real, PANGO_ALIGN_CENTER);
-    pango_layout_set_markup(layout_real, markup, -1);
+    pango_layout_set_alignment(layout_real, text_alignment);
+    pango_layout_set_markup(layout_real, final_markup, -1);
 
     double fr,fg,fb,fa, or_,og,ob,oa, sr,sg,sb,sa;
     parse_hex_color(fgcolor, &fr,&fg,&fb,&fa);
@@ -966,7 +1065,7 @@ Bitmap render_text_pango(const char *markup,
         if (disp_h <= 1080) {
             unsigned char *ss_data_ls = cairo_image_surface_get_data(surface_ss);
             if (!ss_data_ls) {
-                cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+                cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                         desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                         layout_real, ctx_real, cr, surface_ss, surface);
                 return bm;
@@ -1058,7 +1157,7 @@ Bitmap render_text_pango(const char *markup,
         }
     unsigned char *ss_data = cairo_image_surface_get_data(surface_ss);
     if (!ss_data) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -1178,7 +1277,7 @@ Bitmap render_text_pango(const char *markup,
     int h = lh+2*pad;
     surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
     if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -1199,7 +1298,7 @@ Bitmap render_text_pango(const char *markup,
 
     unsigned char *data = cairo_image_surface_get_data(surface);
     if (!data) {
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -1468,7 +1567,7 @@ Bitmap render_text_pango(const char *markup,
      * allocation and pixel-limit logic via allocate_bitmap_buffers(). */
     if (!allocate_bitmap_buffers(&bm, (size_t)w, (size_t)h, palette_mode)) {
         /* skip heavy allocation and return an empty bitmap */
-        cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+        cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                                 desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                                 layout_real, ctx_real, cr, surface_ss, surface);
         return bm;
@@ -1517,7 +1616,7 @@ Bitmap render_text_pango(const char *markup,
     free(err_r_next); free(err_g_next); free(err_b_next);
     /* Cleanup Cairo/Pango resources, and manually free bitmap buffers */
     free_bitmap_buffers(&bm);
-    cleanup_render_resources(false, &bm, 0, 0, 0, 0, 0,
+    cleanup_render_resources(false, &bm, 0, 0, 0, 0, NULL,
                             desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                             layout_real, ctx_real, cr, surface_ss, surface);
     return bm;
@@ -1898,9 +1997,13 @@ Bitmap render_text_pango(const char *markup,
     }
 
     /* Mark successful completion and cleanup all resources */
-    cleanup_render_resources(true, &bm, text_x, text_y, w, h, pad,
+    cleanup_render_resources(true, &bm, w, h, disp_w, disp_h, final_config,
                             desc, layout_dummy, ctx_dummy, cr_dummy, dummy,
                             layout_real, ctx_real, cr, surface_ss, surface);
+    
+    /* Free ASS alignment config if it was allocated, and the markup copy */
+    if (ass_config) free(ass_config);
+    free(markup_copy);
     
     return bm;
 }

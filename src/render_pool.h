@@ -51,6 +51,7 @@
 
 #include <pthread.h>
 #include "render_pango.h"
+#include "runtime_opts.h"
 
 /*
  * @file render_pool.h
@@ -156,21 +157,24 @@ Bitmap render_pool_render_sync(const char *markup,
                                int fontsize, const char *fontfam,
                                const char *fontstyle,
                                const char *fgcolor, const char *outlinecolor,
-                               const char *shadowcolor, const char *bgcolor, int align_code,
-                               double sub_position_pct,
+                               const char *shadowcolor, const char *bgcolor,
+                               SubtitlePositionConfig *pos_config,
                                const char *palette_mode);
 
 /*
  * Submit an asynchronous render job keyed by (track_id, cue_index).
  * The pool copies string arguments internally. Returns 0 on success and
  * -1 if the pool is not running or on allocation failure.
+ * If pos_config is NULL, uses default positioning (bottom-center with 5% bottom margin).
  */
 int render_pool_submit_async(int track_id, int cue_index,
                             const char *markup, int disp_w, int disp_h, int fontsize,
                             const char *fontfam, const char *fontstyle,
                             const char *fgcolor, const char *outlinecolor,
                             const char *shadowcolor, const char *bgcolor, int align_code, 
-                            double sub_position_pct, const char *palette_mode);
+                            double sub_position_pct,
+                            SubtitlePositionConfig *pos_config,
+                            const char *palette_mode);
 
 /*
  * Try to retrieve a completed job for the given (track_id, cue_index).

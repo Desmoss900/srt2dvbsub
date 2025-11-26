@@ -64,6 +64,12 @@
 static char dbg_png_output_dir[PATH_MAX] = "pngs/";
 
 /**
+ * Flag to track whether PNG path was explicitly set via init_png_path(custom_path)
+ * (as opposed to using the default "pngs/")
+ */
+static int png_path_explicitly_set = 0;
+
+/**
  * Helper: Check if directory exists and is writable
  */
 static int is_dir_writable(const char *path)
@@ -144,6 +150,11 @@ int init_png_path(const char *custom_path, char *errmsg)
         return -1;
     }
     
+    /* If path was already explicitly set via CLI, don't overwrite it */
+    if (png_path_explicitly_set && !custom_path) {
+        return 0;  /* Already initialized via CLI, skip default initialization */
+    }
+    
     const char *target_path = custom_path ? custom_path : "pngs/";
     char tmp_errmsg[256] = {0};
     
@@ -155,6 +166,10 @@ int init_png_path(const char *custom_path, char *errmsg)
             return -1;
         }
         strcpy(dbg_png_output_dir, target_path);
+        /* Mark as explicitly set only if custom_path was provided */
+        if (custom_path) {
+            png_path_explicitly_set = 1;
+        }
         return 0;
     }
     
@@ -168,6 +183,7 @@ int init_png_path(const char *custom_path, char *errmsg)
             snprintf(errmsg, 256, "PNG path %.50s failed, falling back to %.50s", 
                      target_path, fallback_path);
             strcpy(dbg_png_output_dir, fallback_path);
+            png_path_explicitly_set = 1;  /* Mark as explicitly set (with fallback) */
             return 0;  /* Fallback succeeded */
         }
         
@@ -254,6 +270,7 @@ void cleanup_png_path(void)
     /* Currently no dynamic allocations; module uses static storage */
     /* Reset to default for next initialization */
     strcpy(dbg_png_output_dir, "pngs/");
+    png_path_explicitly_set = 0;
 }
 
 /**

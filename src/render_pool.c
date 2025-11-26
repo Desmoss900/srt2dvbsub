@@ -179,6 +179,7 @@ typedef struct RenderJob {
     int align_code;
     double sub_position_pct;
     char *palette_mode;
+    SubtitlePositionConfig pos_config;  /* positioning config (position + margins) */
     Bitmap result;
     atomic_int done;
     pthread_cond_t done_cond;
@@ -345,7 +346,7 @@ static void *worker_thread(void *arg) {
         pthread_mutex_unlock(&job_mtx);
         if (!job) continue;
 
-        /* Perform the CPU/GPU-agostic render (Pango/Cairo path). This may be
+        /* Perform the CPU/GPU-agnostic render (Pango/Cairo path). This may be
          * moderately expensive so we do it outside the global mutex to avoid
          * blocking submission or other workers. */
         int64_t render_start = 0;
@@ -357,7 +358,7 @@ static void *worker_thread(void *arg) {
                                       job->fontstyle,
                                       job->fgcolor, job->outlinecolor, job->shadowcolor,
                                       job->bgcolor,
-                                      job->align_code, job->sub_position_pct, job->palette_mode);
+                                      &job->pos_config, job->palette_mode);
         if (bench.enabled && render_start)
         {
             bench_add_render_us(bench_now() - render_start);
@@ -496,15 +497,15 @@ Bitmap render_pool_render_sync(const char *markup,
                                 int fontsize, const char *fontfam,
                                 const char *fontstyle,
                                 const char *fgcolor, const char *outlinecolor,
-                                const char *shadowcolor, const char *bgcolor, int align_code,
-                                double sub_position_pct,
+                                const char *shadowcolor, const char *bgcolor,
+                                SubtitlePositionConfig *pos_config,
                                 const char *palette_mode)
 {
     Bitmap empty = {0};
     /* If the pool isn't active, just call the renderer synchronously to
      * keep callers working without a pool. */
     if (!atomic_load(&pool_active)) {
-        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, bgcolor, align_code, sub_position_pct, palette_mode);
+        return render_text_pango(markup, disp_w, disp_h, fontsize, fontfam, fontstyle, fgcolor, outlinecolor, shadowcolor, bgcolor, pos_config, palette_mode);
     }
 
     /* Build a transient job structure which we will wait on. We don't add
@@ -524,8 +525,17 @@ Bitmap render_pool_render_sync(const char *markup,
     job->disp_w = disp_w;
     job->disp_h = disp_h;
     job->fontsize = fontsize;
-    job->align_code = align_code;
-    job->sub_position_pct = sub_position_pct;
+    /* Copy positioning config if provided */
+    if (pos_config) {
+        job->pos_config = *pos_config;
+    } else {
+        /* Use defaults: bottom-center with 3.5% margins on all sides */
+        job->pos_config.position = SUB_POS_BOT_CENTER;
+        job->pos_config.margin_top = 3.5;
+        job->pos_config.margin_left = 3.5;
+        job->pos_config.margin_bottom = 3.5;
+        job->pos_config.margin_right = 3.5;
+    }
     atomic_store(&job->done, 0);
     job->done_cond_init = 0;
     job->done_mtx_init = 0;
@@ -580,6 +590,7 @@ int render_pool_submit_async(int track_id, int cue_index,
                              const char *fgcolor, const char *outlinecolor,
                              const char *shadowcolor, const char *bgcolor, int align_code,
                              double sub_position_pct,
+                             SubtitlePositionConfig *pos_config,
                              const char *palette_mode)
 {
     /* If no pool exists, fail fast to let callers fall back if desired. */
@@ -614,6 +625,17 @@ int render_pool_submit_async(int track_id, int cue_index,
     job->fontsize = fontsize;
     job->align_code = align_code;
     job->sub_position_pct = sub_position_pct;
+    /* Copy positioning config if provided */
+    if (pos_config) {
+        job->pos_config = *pos_config;
+    } else {
+        /* Use defaults: bottom-center with 3.5% margins on all sides */
+        job->pos_config.position = SUB_POS_BOT_CENTER;
+        job->pos_config.margin_top = 3.5;
+        job->pos_config.margin_left = 3.5;
+        job->pos_config.margin_bottom = 3.5;
+        job->pos_config.margin_right = 3.5;
+    }
     atomic_store(&job->done, 0);
     job->done_cond_init = 0;
     job->done_mtx_init = 0;

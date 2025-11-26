@@ -30,7 +30,7 @@ transport streams for television distribution or digital distribution platforms.
 Key capabilities:
   • Convert SRT subtitle text to dvb bitmap subtitles
   • Support for ASS/SSA format with advanced rendering options
-  • Multi-track subtitle support (up to 16 simultaneous tracks)
+  • Multi-track subtitle support (up to 8 simultaneous tracks)
   • Somewhat professional quality text-to-bitmap rendering using Pango/Cairo
   • Direct MPEG-TS multiplexing without separate remuxing step
   • Multi-threaded rendering for high performance
@@ -280,7 +280,38 @@ Primary use cases:
       • Useful for avoiding overlaps with on-screen graphics or logos
 
 
-5.3 dvb Subtitle Options
+5.3 MPEG-TS Stream Options
+  --pid PID[,PID2,...]
+      Custom PIDs (Program IDs) for subtitle tracks
+      • Single value: auto-increment for each track
+        Format: "--pid 150"  (150, 151, 152, ... for multiple tracks)
+      • Multiple values: explicit PID per track
+        Format: "--pid 150,151,200"  (each track gets specific PID)
+      • Valid range: 32-8186 (excludes reserved 0-31)
+      • Default behavior (no --pid): system assigns PID after audio tracks
+      • Useful for: ensuring subtitle track placement, matching DVB specs
+      • Examples:
+        - "--pid 150": First track 150, second 151, third 152, etc.
+        - "--pid 150,160,170": Explicit assignment for 3 tracks
+      • Validation: no duplicates allowed, no conflicts with A/V PIDs
+      
+  --ts-bitrate BITRATE
+      Override MPEG-TS output bitrate (muxrate) in bits per second
+      • Bitrate in bps: "--ts-bitrate 12000000" (12 Mbps)
+      • Valid range: 100,000 to 1,000,000,000 bps
+      • Default behavior (no --ts-bitrate): auto-detect from input file
+      • Auto-detection: enhanced with extended probe (10 MiB, 30 seconds)
+      • Useful for: matching specific broadcast or streaming requirements
+      • Common values:
+        - 8000000 (8 Mbps): Streaming/limited bandwidth
+        - 12000000 (12 Mbps): Standard broadcast
+        - 20000000 (20 Mbps): High bitrate/UHD
+      • When specified: overrides detected bitrate from input file
+      • Affects: final output file size and timing of subtitle packets
+      • Note: If bitrate too low, muxer may add stuffing to maintain sync
+
+
+5.4 dvb Subtitle Options
   --palette MODE
       Palette mode for color reduction
       • Modes: "ebu-broadcast", "broadcast", "greyscale"
@@ -305,7 +336,32 @@ Primary use cases:
       • Use if rendering performance is critical
 
 
-5.4 Timing & Delay Options
+5.4 dvb Subtitle Options
+  --palette MODE
+      Palette mode for color reduction
+      • Modes: "ebu-broadcast", "broadcast", "greyscale"
+      • ebu-broadcast: EBU R207 standard colors (recommended for broadcast)
+      • broadcast: Broadcast standard palette
+      • greyscale: Grayscale palette
+      • Default: ebu-broadcast
+      • Affects how colors are dithered to dvb palette
+      
+  --ssaa N
+      Supersample anti-aliasing factor (1..24)
+      • Default: 4 (render at 4x internal resolution, then downsample)
+      • Higher values: smoother text, slower rendering
+      • Lower values: faster rendering, possibly jagged text
+      • Reasonable range: 2-8 for most content
+      • Use --no-unsharp to disable unsharp filter on downsampled result
+      
+  --no-unsharp
+      Disable unsharp mask filter on rendered subtitles
+      • Unsharp mask sharpens text after anti-aliasing
+      • Disabling speeds up rendering but may blur text slightly
+      • Use if rendering performance is critical
+
+
+5.5 Timing & Delay Options
   --delay MS[,MS2,...]
       Subtitle delay in milliseconds
       • Single value: applied to all tracks
@@ -318,7 +374,7 @@ Primary use cases:
       • Applied before dvb encoding
 
 
-5.5 Subtitle Attributes
+5.6 Subtitle Attributes
   --forced FLAGS
       Comma-separated forced flags per track (default: all 0)
       • Format: "0,1,0" where 1=forced, 0=not forced
@@ -347,7 +403,7 @@ Primary use cases:
       • Note: Duplicate language codes REQUIRE different forced/hi flags
 
 
-5.6 Performance & Threading
+5.7 Performance & Threading
   --render-threads N
       Parallel rendering workers (default: 0 = single-threaded)
       • 0: Synchronous rendering (no worker pool)
@@ -366,7 +422,7 @@ Primary use cases:
       • Set this if baseline encoding is a bottleneck
 
 
-5.7 Debugging & Quality Control
+5.8 Debugging & Quality Control
   --qc-only
       Run subtitle file quality checks only (no MPEG-TS generation)
       • Validates SRT files for syntax errors
@@ -398,8 +454,18 @@ Primary use cases:
       • Useful for visual inspection and debugging
       • Can consume significant disk space for long videos
 
+  --png-only
+      Output PNG files only (no MPEG-TS file generated)
+      • Renders all subtitles to PNG images in --png-dir directory
+      • No MPEG-TS container file is produced
+      • Useful for visual quality control and subtitle inspection
+      • --png-dir MUST be specified when using this flag
+      • Each subtitle event saved as separate PNG file
+      • Faster than full MPEG-TS encoding (no muxing phase)
+      • Example: --png-only --png-dir "./preview_pngs" renders subtitles for visual review
 
-5.8 Advanced Options
+
+5.9 Advanced Options
   --ass
       Enable libass subtitle rendering (requires --enable-ass build)
       • Switches from Pango rendering to libass
@@ -423,7 +489,7 @@ Primary use cases:
       • Warranty disclaimer
 
 
-5.9 Help & Version
+5.10 Help & Version
   -h, --help, -?
       Show help message and exit
       • Displays all available options and language codes

@@ -51,6 +51,7 @@
 #define UTILS_H
 
 #include <signal.h>
+#include "runtime_opts.h"
 
 /**
  * @brief Prints the version information of the program to the standard output.
@@ -166,5 +167,65 @@ int validate_path_length(const char *path, const char *label);
  * literals. Use on modifiable buffers only.
  */
 char* trim_string_inplace(char *str);
+
+/**
+ * @brief Parse and validate a PID list string.
+ *
+ * Parses a PID list specification string into an array of integers. Supports:
+ * - Single value (e.g., "150") for auto-increment starting from that PID
+ * - Comma-separated list (e.g., "150,151,152") for explicit PID assignment
+ *
+ * @param pid_str Input string containing PIDs to parse (may be NULL)
+ * @param pids_out Pointer to array of parsed PIDs (allocates memory)
+ * @param count_out Pointer to store count of parsed PIDs
+ * @param errmsg Buffer (at least 256 bytes) for error message if validation fails
+ * @return 0 on success, -1 on parsing error, 1 if invalid range
+ */
+int parse_pid_list(const char *pid_str, int **pids_out, int *count_out, char *errmsg);
+
+/**
+ * @brief Parse subtitle positioning specification string into per-track configs.
+ *
+ * Parses positioning specification format:
+ *   "position[,margin_top,margin_left,margin_bottom,margin_right];..."
+ * Example:
+ *   "bottom-center,5.0;top-left,3.0,2.0"
+ *   "center" (uses defaults for all margins)
+ *
+ * Valid positions: top-left, top-center, top-right, middle-left, middle-center,
+ *                  middle-right, bottom-left, bottom-center, bottom-right
+ *
+ * Margins are percentages (0.0-50.0) of canvas dimensions.
+ *
+ * @param spec_str Positioning specification string (may be NULL for defaults)
+ * @param configs Array of SubtitlePositionConfig[8] to populate
+ * @param ntracks Number of tracks to configure (1-8)
+ * @param errmsg Buffer (at least 256 bytes) for error message if validation fails
+ * @return 0 on success, -1 on parse error, 1 if invalid values
+ */
+int parse_subtitle_positions(const char *spec_str, SubtitlePositionConfig *configs, 
+                             int ntracks, char *errmsg);
+
+/**
+ * Extract ASS/SSA alignment number from Pango markup and remove the tag.
+ *
+ * Searches for {\an<digit>} tags in the markup string (ASS alignment override).
+ * ASS alignment values map to numeric keypad positions:
+ *   7 8 9  (TOP_LEFT, TOP_CENTER, TOP_RIGHT)
+ *   4 5 6  (MID_LEFT, MID_CENTER, MID_RIGHT)
+ *   1 2 3  (BOT_LEFT, BOT_CENTER, BOT_RIGHT)
+ *   0      (DEFAULT - use CLI positioning)
+ *
+ * If found, returns the alignment value (1-9), converts it to SubtitlePosition,
+ * and MODIFIES the input markup string by removing the {\an<digit>} tag.
+ * If not found or value is 0, returns NULL (use CLI positioning).
+ * 
+ * IMPORTANT: The markup string MUST be modifiable (not const). The function
+ * modifies it in-place to remove the ASS alignment tag before rendering.
+ *
+ * @param markup Pango markup string (WILL BE MODIFIED to remove {\an<digit>} tag)
+ * @return Allocated SubtitlePositionConfig with ASS position if found, NULL otherwise
+ */
+SubtitlePositionConfig* extract_ass_alignment(char *markup);
 
 #endif

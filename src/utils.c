@@ -59,9 +59,11 @@
 #include <limits.h>
 #include <ctype.h>
 #include <string.h>
+#include <errno.h>
 #include "debug.h"
 #include "dvb_lang.h"
 #include "utils.h"
+#include "runtime_opts.h"
 #include "version.h"
 
 /*
@@ -131,7 +133,10 @@ void print_help(void)
     printf("      --sub-position PERCENT  Vertical position from bottom (0.0-50.0%%, default: 5.0%%)\n");
     printf("      --ssaa N                Force supersample factor (1..24) (default 4)\n");
     printf("      --no-unsharp            Disable the final unsharp pass to speed rendering\n");
-    printf("      --png-dir DIR           Custom directory for debug PNG output (default: pngs/)\n");        
+    printf("      --png-dir DIR           Custom directory for debug PNG output (default: pngs/)\n");
+    printf("      --png-only              Output PNG files only (no MPEG-TS generation)\n");        
+    printf("      --pid PID[,PID2,...]    Custom PIDs for subtitle tracks (single value=auto-increment)\n");
+    printf("      --ts-bitrate BPSI       Override MPEG-TS bitrate (muxrate) in bits per second\n");
     printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
     printf("      --enc-threads N         Encoder thread count (0=auto)\n");
     printf("      --render-threads N      Parallel render workers (0=single-thread)\n");
@@ -549,3 +554,299 @@ char* trim_string_inplace(char *str)
     return str;
 }
 
+/**
+ * @brief Parse and validate a PID list string.
+ *
+ * Parses a PID list specification into an array of integers. Supports:
+ * - Single value (e.g., "150") for auto-increment
+ * - Comma-separated list (e.g., "150,151,152") for explicit PIDs
+ *
+ * Returns 0 on success, allocating memory for pids_out.
+ * Caller is responsible for freeing pids_out with free().
+ */
+int parse_pid_list(const char *pid_str, int **pids_out, int *count_out, char *errmsg)
+{
+    if (!pid_str || !pids_out || !count_out || !errmsg) {
+        if (errmsg) snprintf(errmsg, 256, "Internal error: NULL parameter");
+        return -1;
+    }
+
+    *pids_out = NULL;
+    *count_out = 0;
+
+    /* Make a working copy to parse */
+    char *pid_copy = strdup(pid_str);
+    if (!pid_copy) {
+        snprintf(errmsg, 256, "Out of memory");
+        return -1;
+    }
+
+    /* Count commas to estimate array size */
+    int max_pids = 1;
+    for (const char *p = pid_copy; *p; p++) {
+        if (*p == ',') max_pids++;
+    }
+
+    /* Allocate PID array */
+    int *pids = malloc(max_pids * sizeof(int));
+    if (!pids) {
+        snprintf(errmsg, 256, "Out of memory allocating PID array");
+        free(pid_copy);
+        return -1;
+    }
+
+    /* Parse comma-separated values */
+    int pid_count = 0;
+    char *saveptr = NULL;
+    char *token = strtok_r(pid_copy, ",", &saveptr);
+
+    while (token && pid_count < max_pids) {
+        /* Trim whitespace */
+        token = trim_string_inplace(token);
+
+        /* Parse as integer */
+        char *endptr;
+        errno = 0;
+        long val = strtol(token, &endptr, 10);
+
+        /* Check for conversion errors */
+        if (errno != 0 || endptr == token || *endptr != '\0') {
+            snprintf(errmsg, 256, "Invalid PID value: '%s' is not a valid integer", token);
+            free(pids);
+            free(pid_copy);
+            return -1;
+        }
+
+        /* Validate range: DVB PIDs must be between 32 and 8186 (reserved ranges excluded) */
+        if (val < 32 || val > 8186) {
+            snprintf(errmsg, 256, "PID value %ld out of valid range (32-8186). Range 0-31 are reserved for system PIDs.", val);
+            free(pids);
+            free(pid_copy);
+            return 1;  /* Return 1 for range error (distinct from parse error) */
+        }
+
+        /* Check for duplicate PIDs within the list */
+        for (int i = 0; i < pid_count; i++) {
+            if (pids[i] == (int)val) {
+                snprintf(errmsg, 256, "Duplicate PID value: %ld is specified multiple times", val);
+                free(pids);
+                free(pid_copy);
+                return 1;  /* Return 1 for duplicate error */
+            }
+        }
+
+        pids[pid_count++] = (int)val;
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+
+    free(pid_copy);
+
+    if (pid_count == 0) {
+        snprintf(errmsg, 256, "No valid PID values parsed");
+        free(pids);
+        return -1;
+    }
+
+    *pids_out = pids;
+    *count_out = pid_count;
+    return 0;
+}
+
+/**
+ * parse_subtitle_positions
+ *
+ * Parse and validate subtitle positioning specification string.
+ * Format: "position[,margin_top,margin_left,margin_bottom,margin_right];..."
+ *
+ * @param spec_str Input specification string (NULL means use all defaults)
+ * @param configs Array of SubtitlePositionConfig[8] to populate
+ * @param ntracks Number of tracks to configure
+ * @param errmsg Error message buffer (at least 256 bytes)
+ * @return 0 on success, -1 on parse error, 1 on value error
+ */
+int parse_subtitle_positions(const char *spec_str, SubtitlePositionConfig *configs,
+                             int ntracks, char *errmsg)
+{
+    if (!configs || ntracks < 1 || ntracks > 8 || !errmsg) {
+        return -1;
+    }
+
+    /* Initialize all tracks with defaults */
+    for (int i = 0; i < ntracks; i++) {
+        configs[i].position = SUB_POS_BOT_CENTER;
+        configs[i].margin_top = 3.5;
+        configs[i].margin_left = 2;
+        configs[i].margin_bottom = 3.5;
+        configs[i].margin_right = 2;
+    }
+
+    /* If no spec provided, use all defaults */
+    if (!spec_str || spec_str[0] == '\0') {
+        return 0;
+    }
+
+    char *spec_copy = strdup(spec_str);
+    if (!spec_copy) {
+        snprintf(errmsg, 256, "Out of memory parsing subtitle positions");
+        return -1;
+    }
+
+    char *save_outer = NULL;
+    char *track_spec = strtok_r(spec_copy, ";", &save_outer);
+    int track_idx = 0;
+
+    while (track_spec && track_idx < ntracks) {
+        track_spec = trim_string_inplace(track_spec);
+
+        /* Parse format: "position[,margin_top,margin_left,margin_bottom,margin_right]" */
+        char *save_inner = NULL;
+        char *part = strtok_r(track_spec, ",", &save_inner);
+
+        if (!part) {
+            snprintf(errmsg, 256, "Empty track position specification at index %d", track_idx);
+            free(spec_copy);
+            return -1;
+        }
+
+        /* Parse position name */
+        part = trim_string_inplace(part);
+        SubtitlePosition pos = SUB_POS_BOT_CENTER;
+
+        if (strcasecmp(part, "top-left") == 0 || strcasecmp(part, "1") == 0) {
+            pos = SUB_POS_TOP_LEFT;
+        } else if (strcasecmp(part, "top-center") == 0 || strcasecmp(part, "2") == 0) {
+            pos = SUB_POS_TOP_CENTER;
+        } else if (strcasecmp(part, "top-right") == 0 || strcasecmp(part, "3") == 0) {
+            pos = SUB_POS_TOP_RIGHT;
+        } else if (strcasecmp(part, "middle-left") == 0 || strcasecmp(part, "mid-left") == 0 || strcasecmp(part, "4") == 0) {
+            pos = SUB_POS_MID_LEFT;
+        } else if (strcasecmp(part, "middle-center") == 0 || strcasecmp(part, "mid-center") == 0 || strcasecmp(part, "center") == 0 || strcasecmp(part, "5") == 0) {
+            pos = SUB_POS_MID_CENTER;
+        } else if (strcasecmp(part, "middle-right") == 0 || strcasecmp(part, "mid-right") == 0 || strcasecmp(part, "6") == 0) {
+            pos = SUB_POS_MID_RIGHT;
+        } else if (strcasecmp(part, "bottom-left") == 0 || strcasecmp(part, "bot-left") == 0 || strcasecmp(part, "7") == 0) {
+            pos = SUB_POS_BOT_LEFT;
+        } else if (strcasecmp(part, "bottom-center") == 0 || strcasecmp(part, "bot-center") == 0 || strcasecmp(part, "8") == 0) {
+            pos = SUB_POS_BOT_CENTER;
+        } else if (strcasecmp(part, "bottom-right") == 0 || strcasecmp(part, "bot-right") == 0 || strcasecmp(part, "9") == 0) {
+            pos = SUB_POS_BOT_RIGHT;
+        } else {
+            snprintf(errmsg, 256, "Invalid position '%s' at track %d. Valid: top-left, top-center, top-right, middle-left, middle-center, middle-right, bottom-left, bottom-center, bottom-right", part, track_idx);
+            free(spec_copy);
+            return -1;
+        }
+
+        configs[track_idx].position = pos;
+
+        /* Parse margins (optional) */
+        double margins[4] = {0.0, 0.0, 0.0, 0.0};  /* top, left, bottom, right */
+        int margin_idx = 0;
+
+        while ((part = strtok_r(NULL, ",", &save_inner)) && margin_idx < 4) {
+            part = trim_string_inplace(part);
+            char *endptr;
+            errno = 0;
+            double val = strtod(part, &endptr);
+
+            if (errno != 0 || endptr == part || *endptr != '\0') {
+                snprintf(errmsg, 256, "Invalid margin value '%s' at track %d margin %d", part, track_idx, margin_idx);
+                free(spec_copy);
+                return -1;
+            }
+
+            if (val < 0.0 || val > 50.0) {
+                snprintf(errmsg, 256, "Margin value %.1f%% at track %d margin %d out of range (0.0-50.0%%)", val, track_idx, margin_idx);
+                free(spec_copy);
+                return 1;
+            }
+
+            margins[margin_idx++] = val;
+        }
+
+        /* Assign parsed margins to config */
+        if (margin_idx >= 1) configs[track_idx].margin_top = margins[0];
+        if (margin_idx >= 2) configs[track_idx].margin_left = margins[1];
+        if (margin_idx >= 3) configs[track_idx].margin_bottom = margins[2];
+        if (margin_idx >= 4) configs[track_idx].margin_right = margins[3];
+
+        track_idx++;
+        track_spec = strtok_r(NULL, ";", &save_outer);
+    }
+
+    free(spec_copy);
+
+    /* If fewer specs than tracks, remaining tracks use defaults (already initialized) */
+    return 0;
+}
+
+/**
+ * Extract ASS/SSA alignment number from Pango markup and remove the tag.
+ *
+ * Searches for {\an<digit>} tags and converts to SubtitlePosition.
+ * Also removes the tag from the markup string in-place.
+ * ASS alignment: keypad layout (7=TL, 8=TC, 9=TR, 4=ML, 5=MC, 6=MR, 1=BL, 2=BC, 3=BR, 0=default)
+ */
+SubtitlePositionConfig* extract_ass_alignment(char *markup)
+{
+    if (!markup) return NULL;
+    
+    /* Search for {\an<digit>} pattern */
+    const char *pattern = "{\\an";
+    char *pos = strstr(markup, pattern);
+    
+    if (!pos) return NULL;  /* No alignment tag found */
+    
+    /* Extract the digit after {\an */
+    char *digit_pos = pos + strlen(pattern);
+    if (!*digit_pos || *digit_pos < '0' || *digit_pos > '9') return NULL;  /* Invalid format */
+    
+    int ass_align = *digit_pos - '0';  /* Convert char to int */
+    
+    /* Find the closing brace */
+    char *close_brace = digit_pos + 1;
+    if (*close_brace != '}') return NULL;  /* Invalid format */
+    
+    if (ass_align == 0) {
+        /* 0 means "use default" - still remove the tag but don't return config */
+        /* Remove {\an0} from markup by shifting remaining string */
+        memmove(pos, close_brace + 1, strlen(close_brace + 1) + 1);
+        return NULL;
+    }
+    
+    /* Remove {\an<digit>} from markup by shifting remaining string */
+    memmove(pos, close_brace + 1, strlen(close_brace + 1) + 1);
+    
+    /* Allocate config and convert ASS alignment to SubtitlePosition */
+    SubtitlePositionConfig *config = malloc(sizeof(SubtitlePositionConfig));
+    if (!config) return NULL;
+    
+    /* Initialize with defaults */
+    config->margin_top = 3.5;
+    config->margin_left = 3.5;
+    config->margin_bottom = 3.5;
+    config->margin_right = 3.5;
+    
+    /* Convert ASS keypad number (1-9) to SubtitlePosition enum
+     * ASS: 7=TL, 8=TC, 9=TR, 4=ML, 5=MC, 6=MR, 1=BL, 2=BC, 3=BR
+     * Our enum: 1=TL, 2=TC, 3=TR, 4=ML, 5=MC, 6=MR, 7=BL, 8=BC, 9=BR
+     * Direct mapping: SubtitlePosition = ass_align
+     */
+    switch (ass_align) {
+        case 7: config->position = SUB_POS_TOP_LEFT; break;
+        case 8: config->position = SUB_POS_TOP_CENTER; break;
+        case 9: config->position = SUB_POS_TOP_RIGHT; break;
+        case 4: config->position = SUB_POS_MID_LEFT; break;
+        case 5: config->position = SUB_POS_MID_CENTER; break;
+        case 6: config->position = SUB_POS_MID_RIGHT; break;
+        case 1: config->position = SUB_POS_BOT_LEFT; break;
+        case 2: config->position = SUB_POS_BOT_CENTER; break;
+        case 3: config->position = SUB_POS_BOT_RIGHT; break;
+        default:
+            free(config);
+            return NULL;  /* Invalid alignment value */
+    }
+    
+    LOG(3, "DEBUG: Extracted ASS alignment \\an%d and removed tag from markup -> position %d\n", ass_align, config->position);
+    
+    return config;
+}

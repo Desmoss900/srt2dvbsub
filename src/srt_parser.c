@@ -136,14 +136,18 @@ static int visible_len(const char *s) {
     int count = 0;
     const unsigned char *p = (const unsigned char *)s;
     while (*p) {
+        /* Skip HTML tags: <...> */
         if (*p == '<') {
             const unsigned char *q = (const unsigned char *)strchr((const char *)p, '>');
             if (q) { p = q + 1; continue; }
         }
+        /* Skip ASS/Pango tags: {...}
+         * This includes ASS alignment {\an<digit>}, color tags, style tags, etc. */
         if (*p == '{') {
             const unsigned char *q = (const unsigned char *)strchr((const char *)p, '}');
             if (q) { p = q + 1; continue; }
         }
+        /* Handle UTF-8 multibyte sequences */
         if ((*p & 0x80) == 0) {
             p++;
         } else if (((*p & 0xE0) == 0xC0) && p[1] && ((p[1] & 0xC0) == 0x80)) {

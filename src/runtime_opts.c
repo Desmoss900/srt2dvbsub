@@ -47,6 +47,7 @@
 */
 
 #define _POSIX_C_SOURCE 200809L
+#include <stddef.h>
 #include "runtime_opts.h"
 
 /*
@@ -100,3 +101,37 @@ int video_w = 720;
 
 /* Height of the video in pixels. Default value is set to 480*/
 int video_h = 480;
+
+/* Comma-separated list of custom PIDs for DVB subtitle tracks.
+ * NULL/empty means use default auto-assignment. Single value means auto-increment.
+ * Multiple values should be comma-separated. */
+char *pid_list = NULL;
+
+/* Override bitrate for MPEG-TS output (muxrate) in bits per second.
+ * Set to a positive value to override auto-calculated bitrate.
+ * 0 or negative means use auto-calculated bitrate from input file.
+ * Example values: 12000000 (12 Mbps), 8000000 (8 Mbps), etc. */
+int64_t ts_bitrate = 0;
+
+/* Enable PNG-only mode: render subtitles to PNG files without MPEG-TS output.
+ * 0 = disabled (normal MPEG-TS generation), 1 = PNG-only mode.
+ * When enabled, no MPEG-TS file is produced; only PNG images are saved. */
+int png_only = 0;
+
+/* Subtitle positioning specification: comma-separated per-track positioning configs.
+ * Format: "position[,margins];position[,margins];..."
+ * Example: "bottom-center,5.0;top-left,3.0,2.0"
+ * NULL means use default (bottom-center with 5% margin for all tracks) */
+char *sub_position_spec = NULL;
+
+/* Per-track subtitle positioning configurations (max 8 tracks).
+ * Initialized with defaults and populated from sub_position_spec during setup. */
+SubtitlePositionConfig sub_pos_configs[8] = {
+    [0 ... 7] = {
+        .position = SUB_POS_BOT_CENTER,
+        .margin_top = 3.5,
+        .margin_left = 3.5,
+        .margin_bottom = 3.5,
+        .margin_right = 3.5
+    }
+};

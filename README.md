@@ -1,3 +1,7 @@
+<p align="center">
+  <image src="docs/images/srt2dvbsub_logo.png"/>
+</p>
+
 # srt2dvbsub
 
 **Convert SRT Subtitles to dvb Subtitles in MPEG-TS**
@@ -12,7 +16,7 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 
 **Key Features:**
 -  SRT to dvb subtitle conversion
--  Multi-track subtitle support (up to 16 simultaneous tracks)
+-  Multi-track subtitle support (up to 8 simultaneous tracks)
 -  Professional text-to-bitmap rendering (Pango/Cairo)
 -  Direct MPEG-TS multiplexing
 -  Automatic resolution detection (SD, HD, UHD)
