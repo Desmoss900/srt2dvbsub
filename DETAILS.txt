@@ -83,9 +83,15 @@ Primary use cases:
   ✓ Manual font size override support
   ✓ Custom foreground, outline, and shadow colors
   ✓ Color validation and format conversion
+  ✓ Advanced 9-position canvas positioning (top/center/bottom + left/center/right)
+  ✓ Per-track margin control (percentage-based for resolution independence)
+  ✓ Automatic text justification (left/center/right) matching position
+  ✓ ASS/SSA alignment tag recognition ({\an<digit>}) for per-subtitle positioning
 
 3.3 dvb Subtitle Generation
   ✓ MPEG-TS multiplexing with subtitle tracks
+  ✓ Custom PID assignment with validation
+  ✓ Manual bitrate control (MPEG-TS muxrate)
   ✓ dvb Page Composition Segment (PCS) generation
   ✓ Palette mode selection (EBU broadcast, broadcast, greyscale)
   ✓ Automatic dithering for color reduction
@@ -99,6 +105,7 @@ Primary use cases:
   ✓ Benchmark mode for performance analysis
   ✓ Quality control (QC) mode for subtitle validation
   ✓ Debug PNG output for visual inspection
+  ✓ PNG-only mode for preview generation (no MPEG-TS encoding)
   ✓ Comprehensive debug logging
 
 3.5 Compatibility
@@ -266,18 +273,67 @@ Primary use cases:
         - #404040 = dark gray background
       • Background fills entire subtitle text bounding box with equal padding
 
-  --sub-position PERCENT
-      Vertical position of subtitles from bottom of screen (default: 5.0%)
-      • Format: floating-point percentage (0.0 to 50.0)
-      • Range: 0.0% (bottom of screen) to 50.0% (middle of screen)
-      • Default: 5.0% (subtitles near bottom of screen)
+  --sub-position POSITION
+      Subtitle position on canvas (default: bottom-center)
+      • Supported positions: top-left, top-center, top-right,
+                          middle-left, middle-center, middle-right,
+                          bottom-left, bottom-center, bottom-right
+      • Format: position name (e.g., "--sub-position top-left")
+      • Default: bottom-center (traditional TV placement)
       • Examples:
-        - "--sub-position 5.0" = standard TV position (default)
-        - "--sub-position 5.5" = slightly higher than standard
-        - "--sub-position 50.0" = half-way up screen
-        - "--sub-position 1.0" = very close to bottom
-      • Higher values = larger gap from bottom = text positioned higher on screen
+        - "--sub-position bottom-center" = standard TV position (default)
+        - "--sub-position top-left" = corner positioning
+        - "--sub-position middle-right" = side positioning
+      • Text alignment within bounding box matches position:
+        - LEFT positions: text left-justified
+        - CENTER positions: text center-justified
+        - RIGHT positions: text right-justified
+      • Combines with margin flags for precise placement
       • Useful for avoiding overlaps with on-screen graphics or logos
+      
+  --margin-top PERCENT
+      Top margin for subtitle placement (default: 3.5%)
+      • Format: floating-point percentage (0.0 to 50.0)
+      • Applies to: top-left, top-center, top-right positions
+      • Default: 3.5% of canvas height
+      • Example: "--sub-position top-left --margin-top 5.0" places subtitle 5% from top
+      
+  --margin-left PERCENT
+      Left margin for subtitle placement (default: 3.5%)
+      • Format: floating-point percentage (0.0 to 50.0)
+      • Applies to: top-left, center-left, bottom-left positions
+      • Default: 3.5% of canvas width
+      • Example: "--sub-position top-left --margin-left 3.0" places subtitle 3% from left
+      
+  --margin-bottom PERCENT
+      Bottom margin for subtitle placement (default: 3.5%)
+      • Format: floating-point percentage (0.0 to 50.0)
+      • Applies to: bottom-left, bottom-center, bottom-right positions
+      • Default: 3.5% of canvas height
+      • Example: "--sub-position bottom-center --margin-bottom 5.0" places subtitle 5% from bottom
+      
+  --margin-right PERCENT
+      Right margin for subtitle placement (default: 3.5%)
+      • Format: floating-point percentage (0.0 to 50.0)
+      • Applies to: top-right, center-right, bottom-right positions
+      • Default: 3.5% of canvas width
+      • Example: "--sub-position bottom-right --margin-right 3.5" places subtitle 3.5% from right
+      
+  ASS/SSA Alignment Tags
+      Automatic positioning via {\an<digit>} tags in subtitle text
+      • Format: {\an<digit>} where digit is 1-9 or 0
+      • Mapping (numeric keypad layout):
+        - {\an7} = top-left, {\an8} = top-center, {\an9} = top-right
+        - {\an4} = center-left, {\an5} = center, {\an6} = center-right
+        - {\an1} = bottom-left, {\an2} = bottom-center, {\an3} = bottom-right
+        - {\an0} = use CLI default
+      • Tags override CLI positioning on per-subtitle basis
+      • Tags are automatically removed before rendering (never visible)
+      • Useful for: subtitles extracted from MPEG-2 closed captions
+      • Processing priority (highest to lowest):
+        1. ASS tags in subtitle text
+        2. CLI --sub-position and --margin-* flags
+        3. Default: bottom-center with 3.5% margins
 
 
 5.3 MPEG-TS Stream Options

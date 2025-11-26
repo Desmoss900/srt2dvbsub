@@ -22,6 +22,11 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 -  Automatic resolution detection (SD, HD, UHD)
 -  Multi-threaded rendering for high performance
 -  ASS/SSA tag support and rendering (optional)
+-  Advanced 9-position canvas positioning with per-track margins
+-  ASS alignment tag recognition (`{\an<digit>}`) for per-subtitle positioning
+-  Custom MPEG-TS PID assignment with validation
+-  Manual bitrate control with enhanced bitrate detection
+-  Independent PNG output for preview and quality control
 -  SRT Quality control (QC) verification mode
 -  Full rendering control (fonts, colors, sizing)
 -  Per-track language codes and flags (forced, hearing-impaired)
@@ -55,6 +60,20 @@ srt2dvbsub \
   --delay 100,200
 ```
 
+### Advanced Positioning
+
+```bash
+# Position subtitles at top-left with custom margins
+srt2dvbsub \
+  --input video.ts \
+  --output video_styled.ts \
+  --srt subtitles.srt \
+  --languages eng \
+  --sub-position top-left \
+  --margin-left 3.5 \
+  --margin-top 5.0
+```
+
 ### Custom Rendering
 
 ```bash
@@ -68,8 +87,21 @@ srt2dvbsub \
   --fontsize 40 \
   --fgcolor "#ffffff" \
   --outlinecolor "#000000" \
-  --sub-position 5.5 \
+  --sub-position middle-center \
   --ssaa 4
+```
+
+### PNG Preview Mode
+
+```bash
+# Generate PNG files for preview without full MPEG-TS encoding
+srt2dvbsub \
+  --png-only \
+  --png-dir ./subtitle_previews \
+  --srt subtitles.srt \
+  --languages eng \
+  --font "Liberation Sans" \
+  --fontsize 40
 ```
 
 ### Quality Check Only
@@ -132,14 +164,24 @@ srt2dvbsub --help
 --outlinecolor #RRGGBB    Outline color (default: gray)
 --shadowcolor #AARRGGBB   Shadow color with optional alpha
 --bg-color #RRGGBB        Background color (optional - default: transparent)
---sub-position PERCENT    Vertical position from bottom (0.0-50.0%, default: 5.0%)
+--sub-position POSITION   Position on canvas: top-left, top-center, top-right, 
+                          middle-left, middle-center, middle-right, 
+                          bottom-left, bottom-center (default), bottom-right
+--margin-top PERCENT      Top margin as % of canvas (0.0-50.0%, default: 3.5%)
+--margin-left PERCENT     Left margin as % of canvas (0.0-50.0%, default: 3.5%)
+--margin-bottom PERCENT   Bottom margin as % of canvas (0.0-50.0%, default: 3.5%)
+--margin-right PERCENT    Right margin as % of canvas (0.0-50.0%, default: 3.5%)
 ```
 
-### dvb Options
+### MPEG-TS & dvb Options
 ```
+--pid PID[,PID2,...]      Custom subtitle track PIDs (32-8186)
+--ts-bitrate BITRATE      Override output bitrate in bps (100k-1G, default: auto-detect)
 --palette MODE            Color palette: ebu-broadcast, broadcast, greyscale
 --ssaa N                  Anti-aliasing factor (1-24, default: 4)
 --no-unsharp              Disable sharpening filter
+--png-only                Generate PNG files only (skip MPEG-TS encoding)
+--png-dir PATH            Output directory for PNG files
 ```
 
 ### Timing & Attributes
@@ -168,11 +210,14 @@ srt2dvbsub --help
 
 ## Use Cases
 
-1. **IPTV/OTT Platforms**: Deliver broadcast-compliant dvb subtitles
+1. **IPTV/OTT Platforms**: Deliver broadcast-compliant dvb subtitles with custom positioning
 2. **Archive Digitization**: Convert text based subtitle formats to dvb subtitles
-3. **Broadcast Mastering**: Multi-language subtitle preparation
-4. **Content Distribution**: Quality-controlled subtitle delivery
+3. **Broadcast Mastering**: Multi-language subtitle preparation with precise positioning
+4. **Content Distribution**: Quality-controlled subtitle delivery with per-track customization
 5. **Automated Encoding**: Pipeline integration for batch processing
+6. **Closed Caption Import**: Automatically respect ASS positioning tags from MPEG-2 CC extraction
+7. **Preview Generation**: Generate PNG previews for QA before full encoding
+8. **Stream Management**: Custom PID assignment and bitrate control for compliant multiplexing
 
 ## Performance
 
