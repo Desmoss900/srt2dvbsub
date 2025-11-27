@@ -130,8 +130,8 @@ SubtitlePositionConfig sub_pos_configs[8] = {
     [0 ... 7] = {
         .position = SUB_POS_BOT_CENTER,
         .margin_top = 3.5,
-        .margin_left = 3.5,
+        .margin_left = 2.0,
         .margin_bottom = 3.5,
-        .margin_right = 3.5
+        .margin_right = 2.0
     }
 };
