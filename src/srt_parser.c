@@ -168,6 +168,16 @@ static int visible_len(const char *s) {
 
 
 /*
+ * Clean up resources allocated in normalize_cue_text on error.
+ * All pointers are set to NULL after freeing.
+ */
+static void normalize_cue_text_cleanup(char **buf, char **out, char **tmp) {
+    if (buf && *buf) { free(*buf); *buf = NULL; }
+    if (out && *out) { free(*out); *out = NULL; }
+    if (tmp && *tmp) { free(*tmp); *tmp = NULL; }
+}
+
+/*
  * Normalize cue text: collapse whitespace, join lines and wrap to
  * `max_chars` per line using `max_lines`. The function returns a newly
  * allocated string which the caller must free.
@@ -187,7 +197,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     char *tmp = NULL;
 
     buf = malloc(buf_cap);
-    if (!buf) goto oom;
+    if (!buf) return NULL;
     size_t buf_len = 0;
     buf[0] = '\0';
 
@@ -204,7 +214,10 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (buf_len + 1 >= buf_cap) {
                     size_t nc = buf_cap * 2 + 16;
                     char *nt = realloc(buf, nc);
-                    if (!nt) goto oom;
+                    if (!nt) {
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     buf = nt; buf_cap = nc;
                 }
                 buf[buf_len++] = '\n';
@@ -218,7 +231,10 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (buf_len + 1 >= buf_cap) {
                     size_t nc = buf_cap * 2 + 16;
                     char *nt = realloc(buf, nc);
-                    if (!nt) goto oom;
+                    if (!nt) {
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     buf = nt; buf_cap = nc;
                 }
                 buf[buf_len++] = ' ';
@@ -230,7 +246,10 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
             if (buf_len + 1 >= buf_cap) {
                 size_t nc = buf_cap * 2 + 16;
                 char *nt = realloc(buf, nc);
-                if (!nt) goto oom;
+                if (!nt) {
+                    normalize_cue_text_cleanup(&buf, &out, &tmp);
+                    return NULL;
+                }
                 buf = nt; buf_cap = nc;
             }
             buf[buf_len++] = *p++;
@@ -242,13 +261,19 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     /* Prepare output dynamic buffer */
     size_t out_cap = buf_len + 1 + (size_t)max_lines + 8;
     out = malloc(out_cap);
-    if (!out) goto oom;
+    if (!out) {
+        normalize_cue_text_cleanup(&buf, &out, &tmp);
+        return NULL;
+    }
     size_t out_len = 0;
     out[0] = '\0';
 
     /* Process buffer line-by-line, preserving explicit newlines from SRT file */
     tmp = strdup(buf);
-    if (!tmp) goto oom;
+    if (!tmp) {
+        normalize_cue_text_cleanup(&buf, &out, &tmp);
+        return NULL;
+    }
 
     int whole_cue_is_symbol = 0;
     char *plain = strip_tags(raw);
@@ -268,7 +293,10 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
         size_t line_size = line_end ? (size_t)(line_end - line_start) : strlen(line_start);
         
         char *line_copy = strndup(line_start, line_size);
-        if (!line_copy) goto oom;
+        if (!line_copy) {
+            normalize_cue_text_cleanup(&buf, &out, &tmp);
+            return NULL;
+        }
 
         /* Tokenize the current line by spaces */
         char *saveptr = NULL;
@@ -285,7 +313,11 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     if (out_len + 1 >= out_cap) {
                         size_t nc = out_cap * 2 + 16;
                         char *nt = realloc(out, nc);
-                        if (!nt) { free(line_copy); goto oom; }
+                        if (!nt) {
+                            free(line_copy);
+                            normalize_cue_text_cleanup(&buf, &out, &tmp);
+                            return NULL;
+                        }
                         out = nt; out_cap = nc;
                     }
                     out[out_len++] = '\n'; out[out_len] = '\0';
@@ -295,7 +327,11 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (out_len + tlen >= out_cap) {
                     size_t nc = out_len + tlen + 16;
                     char *nt = realloc(out, nc);
-                    if (!nt) { free(line_copy); goto oom; }
+                    if (!nt) {
+                        free(line_copy);
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     out = nt; out_cap = nc;
                 }
                 memcpy(out + out_len, tok, tlen);
@@ -307,7 +343,11 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (out_len + 1 >= out_cap) {
                     size_t nc = out_cap * 2 + 16;
                     char *nt = realloc(out, nc);
-                    if (!nt) { free(line_copy); goto oom; }
+                    if (!nt) {
+                        free(line_copy);
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     out = nt; out_cap = nc;
                 }
                 out[out_len++] = '\n'; out[out_len] = '\0';
@@ -318,7 +358,11 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (out_len + tlen >= out_cap) {
                     size_t nc = out_len + tlen + 16;
                     char *nt = realloc(out, nc);
-                    if (!nt) { free(line_copy); goto oom; }
+                    if (!nt) {
+                        free(line_copy);
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     out = nt; out_cap = nc;
                 }
                 memcpy(out + out_len, tok, tlen);
@@ -330,7 +374,11 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     if (out_len + 1 >= out_cap) {
                         size_t nc = out_cap * 2 + 16;
                         char *nt = realloc(out, nc);
-                        if (!nt) { free(line_copy); goto oom; }
+                        if (!nt) {
+                            free(line_copy);
+                            normalize_cue_text_cleanup(&buf, &out, &tmp);
+                            return NULL;
+                        }
                         out = nt; out_cap = nc;
                     }
                     out[out_len++] = ' '; out[out_len] = '\0';
@@ -340,7 +388,11 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (out_len + tlen >= out_cap) {
                     size_t nc = out_len + tlen + 16;
                     char *nt = realloc(out, nc);
-                    if (!nt) { free(line_copy); goto oom; }
+                    if (!nt) {
+                        free(line_copy);
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     out = nt; out_cap = nc;
                 }
                 memcpy(out + out_len, tok, tlen);
@@ -360,7 +412,10 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 if (out_len + 1 >= out_cap) {
                     size_t nc = out_cap * 2 + 16;
                     char *nt = realloc(out, nc);
-                    if (!nt) goto oom;
+                    if (!nt) {
+                        normalize_cue_text_cleanup(&buf, &out, &tmp);
+                        return NULL;
+                    }
                     out = nt; out_cap = nc;
                 }
                 out[out_len++] = '\n'; out[out_len] = '\0';
@@ -376,12 +431,6 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
     free(tmp);
     free(buf);
     return out;
-
-oom:
-    free(tmp);
-    free(out);
-    free(buf);
-    return NULL;
 }
 
 /*
@@ -725,6 +774,13 @@ static void remove_ass_h(char *text) {
 }
 
 /*
+ * Clean up resources allocated in normalize_tags on error.
+ */
+static void normalize_tags_cleanup(char **tmp) {
+    if (tmp && *tmp) { free(*tmp); *tmp = NULL; }
+}
+
+/*
  * Translate a subset of ASS override tags to Pango markup. The returned
  * string is newly allocated and must be freed by the caller. This is a
  * lightweight translator intended for basic styling (bold/italic/underline,
@@ -744,7 +800,10 @@ static char* normalize_tags(const char *in) {
     const char *p = in;
     while (*p) {
         if (!strncmp(p, "{\\i1}", 5)) {
-            if (dyn_append(&tmp, &cap, &tmp_len, "<i>") < 0) goto err;
+            if (dyn_append(&tmp, &cap, &tmp_len, "<i>") < 0) {
+                normalize_tags_cleanup(&tmp);
+                return NULL;
+            }
             stack[sp++] = "</i>";
             if (sp >= MAX_TAG_STACK) sp = MAX_TAG_STACK-1;
             p += 5;
@@ -752,7 +811,10 @@ static char* normalize_tags(const char *in) {
         else if (!strncmp(p, "{\\i0}", 5)) {
             for (int j=sp-1; j>=0; j--) {
                 if (strcmp(stack[j], "</i>")==0) {
-                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) goto err;
+                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) {
+                        normalize_tags_cleanup(&tmp);
+                        return NULL;
+                    }
                     sp = j;
                     break;
                 }
@@ -760,7 +822,10 @@ static char* normalize_tags(const char *in) {
             p += 5;
         }
         else if (!strncmp(p, "{\\b1}", 5)) {
-            if (dyn_append(&tmp, &cap, &tmp_len, "<b>") < 0) goto err;
+            if (dyn_append(&tmp, &cap, &tmp_len, "<b>") < 0) {
+                normalize_tags_cleanup(&tmp);
+                return NULL;
+            }
             stack[sp++] = "</b>";
             if (sp >= MAX_TAG_STACK) sp = MAX_TAG_STACK-1;
             p += 5;
@@ -768,7 +833,10 @@ static char* normalize_tags(const char *in) {
         else if (!strncmp(p, "{\\b0}", 5)) {
             for (int j=sp-1; j>=0; j--) {
                 if (strcmp(stack[j], "</b>")==0) {
-                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) goto err;
+                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) {
+                        normalize_tags_cleanup(&tmp);
+                        return NULL;
+                    }
                     sp = j;
                     break;
                 }
@@ -776,7 +844,10 @@ static char* normalize_tags(const char *in) {
             p += 5;
         }
         else if (!strncmp(p, "{\\u1}", 5)) {
-            if (dyn_append(&tmp, &cap, &tmp_len, "<u>") < 0) goto err;
+            if (dyn_append(&tmp, &cap, &tmp_len, "<u>") < 0) {
+                normalize_tags_cleanup(&tmp);
+                return NULL;
+            }
             stack[sp++] = "</u>";
             if (sp >= MAX_TAG_STACK) sp = MAX_TAG_STACK-1;
             p += 5;
@@ -784,7 +855,10 @@ static char* normalize_tags(const char *in) {
         else if (!strncmp(p, "{\\u0}", 5)) {
             for (int j=sp-1; j>=0; j--) {
                 if (strcmp(stack[j], "</u>")==0) {
-                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) goto err;
+                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) {
+                        normalize_tags_cleanup(&tmp);
+                        return NULL;
+                    }
                     sp = j;
                     break;
                 }
@@ -794,7 +868,10 @@ static char* normalize_tags(const char *in) {
         else if (!strncmp(p, "{\\c&H", 5) || !strncmp(p, "{\\1c&H", 6)) {
             for (int j=sp-1; j>=0; j--) {
                 if (strncmp(stack[j], "</span>", 7)==0) {
-                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) goto err;
+                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) {
+                        normalize_tags_cleanup(&tmp);
+                        return NULL;
+                    }
                     sp = j;
                     break;
                 }
@@ -803,17 +880,29 @@ static char* normalize_tags(const char *in) {
             parse_ass_color(p, color, sizeof(color));
             char span[64];
             snprintf(span, sizeof(span), "<span foreground=\"%s\">", color);
-            if (dyn_append(&tmp, &cap, &tmp_len, span) < 0) goto err;
+            if (dyn_append(&tmp, &cap, &tmp_len, span) < 0) {
+                normalize_tags_cleanup(&tmp);
+                return NULL;
+            }
             stack[sp++] = "</span>";
             if (sp >= MAX_TAG_STACK) sp = MAX_TAG_STACK-1;
             const char *q = strchr(p, '}');
             if (q) p = q+1;
-            else { if (dyn_append(&tmp, &cap, &tmp_len, "{") < 0) goto err; p++; }
+            else {
+                if (dyn_append(&tmp, &cap, &tmp_len, "{") < 0) {
+                    normalize_tags_cleanup(&tmp);
+                    return NULL;
+                }
+                p++;
+            }
         }
         else if (!strncmp(p, "{\\fn", 4)) {
             for (int j=sp-1; j>=0; j--) {
                 if (strncmp(stack[j], "</span>", 7)==0) {
-                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) goto err;
+                    if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) {
+                        normalize_tags_cleanup(&tmp);
+                        return NULL;
+                    }
                     sp = j;
                     break;
                 }
@@ -827,7 +916,10 @@ static char* normalize_tags(const char *in) {
                 fontname[len] = 0;
                 char span[256];
                 snprintf(span, sizeof(span), "<span font=\"%s\">", fontname);
-                if (dyn_append(&tmp, &cap, &tmp_len, span) < 0) goto err;
+                if (dyn_append(&tmp, &cap, &tmp_len, span) < 0) {
+                    normalize_tags_cleanup(&tmp);
+                    return NULL;
+                }
                 stack[sp++] = "</span>";
                 if (sp >= MAX_TAG_STACK) sp = MAX_TAG_STACK-1;
                 p = q+1;
@@ -839,22 +931,28 @@ static char* normalize_tags(const char *in) {
                  !strncmp(p, "{\\fad", 5) || !strncmp(p, "{\\org", 5)) {
             const char *q = strchr(p, '}');
             if (q) p = q+1;
-            else { if (dyn_append(&tmp, &cap, &tmp_len, "{") < 0) goto err; p++; }
+            else { if (dyn_append(&tmp, &cap, &tmp_len, "{") < 0) {
+                normalize_tags_cleanup(&tmp);
+                return NULL;
+            } p++; }
         }
         else {
             char one[2] = { *p++, '\0' };
-            if (dyn_append(&tmp, &cap, &tmp_len, one) < 0) goto err;
+            if (dyn_append(&tmp, &cap, &tmp_len, one) < 0) {
+                normalize_tags_cleanup(&tmp);
+                return NULL;
+            }
         }
     }
 
     for (int j=sp-1; j>=0; j--) {
-        if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) goto err;
+        if (dyn_append(&tmp, &cap, &tmp_len, stack[j]) < 0) {
+            normalize_tags_cleanup(&tmp);
+            return NULL;
+        }
     }
 
     return tmp;
-err:
-    free(tmp);
-    return NULL;
 }
 
 /*
@@ -1386,6 +1484,13 @@ int parse_srt_with_stats(const char *filename, SRTEntry **entries_out, FILE *qc,
     return (int)n;
 }
 
+/*
+ * Clean up resources allocated in srt_html_to_ass on error.
+ */
+static void srt_html_to_ass_cleanup(char **out) {
+    if (out && *out) { free(*out); *out = NULL; }
+}
+
 /* 
  * Convert minimal HTML tags (<i>, <b>, <font color>) into ASS overrides.
  * The caller frees the returned string. 
@@ -1399,10 +1504,34 @@ char* srt_html_to_ass(const char *in) {
     size_t out_len = 0;
     const char *p = in;
     while (*p) {
-        if (!strncasecmp(p,"<i>",3))      { if (dyn_append(&out,&cap,&out_len,"{\\i1}") < 0) goto err; p+=3; }
-        else if (!strncasecmp(p,"</i>",4)){ if (dyn_append(&out,&cap,&out_len,"{\\i0}") < 0) goto err; p+=4; }
-        else if (!strncasecmp(p,"<b>",3)) { if (dyn_append(&out,&cap,&out_len,"{\\b1}") < 0) goto err; p+=3; }
-        else if (!strncasecmp(p,"</b>",4)){ if (dyn_append(&out,&cap,&out_len,"{\\b0}") < 0) goto err; p+=4; }
+        if (!strncasecmp(p,"<i>",3)) {
+            if (dyn_append(&out,&cap,&out_len,"{\\i1}") < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
+            p+=3;
+        }
+        else if (!strncasecmp(p,"</i>",4)) {
+            if (dyn_append(&out,&cap,&out_len,"{\\i0}") < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
+            p+=4;
+        }
+        else if (!strncasecmp(p,"<b>",3)) {
+            if (dyn_append(&out,&cap,&out_len,"{\\b1}") < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
+            p+=3;
+        }
+        else if (!strncasecmp(p,"</b>",4)) {
+            if (dyn_append(&out,&cap,&out_len,"{\\b0}") < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
+            p+=4;
+        }
         else if (!strncasecmp(p,"<font color=",12)) {
             const char *q = strchr(p,'"'); if (!q) { p++; continue; }
             const char *r = strchr(q+1,'"'); if (!r) { p++; continue; }
@@ -1416,7 +1545,10 @@ char* srt_html_to_ass(const char *in) {
                 sscanf(color+1,"%02x%02x%02x",&rr,&gg,&bb);
             char tag[64];
             snprintf(tag,sizeof(tag),"{\\c&H%02X%02X%02X&}",bb,gg,rr);
-            if (dyn_append(&out,&cap,&out_len,tag) < 0) goto err;
+            if (dyn_append(&out,&cap,&out_len,tag) < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
             p = r+2; // skip ">"
         }
         else if (!strncasecmp(p,"<font face=",11)) {
@@ -1429,19 +1561,28 @@ char* srt_html_to_ass(const char *in) {
             face[face_len] = 0;
             char tag[128];
             snprintf(tag,sizeof(tag),"{\\fn%s}",face);
-            if (dyn_append(&out,&cap,&out_len,tag) < 0) goto err;
+            if (dyn_append(&out,&cap,&out_len,tag) < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
             p = r+2; // skip ">"
         }
         else if (!strncasecmp(p,"</font>",7)) {
-            if (dyn_append(&out,&cap,&out_len,"{\\r}") < 0) goto err;
+            if (dyn_append(&out,&cap,&out_len,"{\\r}") < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
             p+=7;
         }
-        else { char one[2] = { *p++, '\0' }; if (dyn_append(&out,&cap,&out_len,one) < 0) goto err; }
+        else {
+            char one[2] = { *p++, '\0' };
+            if (dyn_append(&out,&cap,&out_len,one) < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
+        }
     }
     return out;
-err:
-    free(out);
-    return NULL;
 }
 
 /*

@@ -592,7 +592,7 @@ static int cli_parse(int argc, char **argv,
                 return 1;
             }
             ctx->cli_bgcolor = *cli_bgcolor;
-            LOG(0, "DEBUG: Set background color to: %s\n", *cli_bgcolor);
+            LOG(1, "DEBUG: Set background color to: %s\n", *cli_bgcolor);
             break;
         case 1012:
             /* Parse and validate subtitle delay with better error messages */

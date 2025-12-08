@@ -66,6 +66,112 @@
 #include "runtime_opts.h"
 #include "version.h"
 
+
+
+/*
+ * Clean up and render language table with fallback to simple list format.
+ * Handles both the optimized multi-column layout and the simple single-column fallback.
+ */
+static void print_language_table(const struct dvb_lang_entry *langs, int lang_count,
+                                 char **entries, size_t *elens, size_t *col_widths,
+                                 int allocated_entries, int fallback)
+{
+    if (fallback) {
+        if (entries) {
+            for (int i = 0; i < allocated_entries; i++) free(entries[i]);
+        }
+        free(entries);
+        free(elens);
+        free(col_widths);
+        for (int i = 0; i < lang_count; i++) {
+            const struct dvb_lang_entry *p = &langs[i];
+            printf("  %s  %s / %s\n", p->code, p->ename, p->native);
+        }
+    } else {
+        /* Determine terminal width */
+        int term_w = 80;
+        struct winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) term_w = ws.ws_col;
+        else {
+            char *cols_env = getenv("COLUMNS");
+            if (cols_env) term_w = atoi(cols_env);
+        }
+
+        const int gap = 4; /* spaces between columns */
+        int cols = term_w / (int)(elens[0] + gap);
+        if (cols < 1) cols = 1;
+        if (cols > lang_count) cols = lang_count;
+
+        /* Try to fit by reducing columns until the computed column widths fit. */
+        int rows = 0;
+        while (cols >= 1) {
+            rows = (lang_count + cols - 1) / cols;
+            /* compute per-column width */
+            size_t *new_cols = calloc((size_t)cols, sizeof(size_t));
+            if (!new_cols) {
+                fallback = 1;
+                break;
+            }
+            free(col_widths);
+            col_widths = new_cols;
+            for (int c = 0; c < cols; c++) {
+                size_t w = 0;
+                for (int r = 0; r < rows; r++) {
+                    int idx = c * rows + r;
+                    if (idx >= lang_count) break;
+                    if (elens[idx] > w) w = elens[idx];
+                }
+                col_widths[c] = w;
+            }
+            /* total width */
+            size_t total = 0;
+            for (int c = 0; c < cols; c++) total += col_widths[c];
+            total += (size_t)gap * (size_t)(cols - 1);
+            if ((int)total <= term_w) break; /* fits */
+            cols--; /* try fewer columns */
+            if (cols == 0) cols = 1;
+        }
+
+        if (fallback) {
+            if (entries) {
+                for (int i = 0; i < allocated_entries; i++) free(entries[i]);
+            }
+            free(entries);
+            free(elens);
+            free(col_widths);
+            for (int i = 0; i < lang_count; i++) {
+                const struct dvb_lang_entry *p = &langs[i];
+                printf("  %s  %s / %s\n", p->code, p->ename, p->native);
+            }
+        } else {
+            /* Print rows */
+            for (int r = 0; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    int idx = c * rows + r;
+                    if (idx >= lang_count) break;
+                    /* left-align in column width using display widths */
+                    printf("  %s", entries[idx]);
+                    /* pad with spaces based on display width, not byte length */
+                    int vis = utf8_display_width(entries[idx]);
+                    int pad = (int)col_widths[c] - vis;
+                    if (pad > 0) {
+                        for (int s = 0; s < pad; s++) putchar(' ');
+                    }
+                    if (c < cols - 1) {
+                        for (int s = 0; s < gap; s++) putchar(' ');
+                    }
+                }
+                printf("\n");
+            }
+
+            for (int i = 0; i < lang_count; i++) free(entries[i]);
+            free(entries);
+            free(elens);
+            free(col_widths);
+        }
+    }
+}
+
 /*
  * print_help
  *
@@ -102,7 +208,6 @@
  *   - Respond to `--help`, `-h`, or `-?` requests, or accompany argument
  *     validation failures where guidance should be displayed.
  */
-
 void print_help(void)
 {
     printf("Usage: srt2dvbsub --input in.ts --output out.ts --srt subs.srt[,subs2.srt] --languages eng[,deu] [options]\n\n");
@@ -139,136 +244,129 @@ void print_help(void)
     printf("      --ssaa N                Force supersample factor (1..24) (default 4)\n");
     printf("      --no-unsharp            Disable the final unsharp pass to speed rendering\n");
     printf("      --png-dir DIR           Custom directory for debug PNG output (default: pngs/)\n");
-    printf("      --png-only              Output PNG files only (no MPEG-TS generation)\n");        
+    printf("      --png-only              Output PNG files only (no MPEG-TS generation)\n");
     printf("      --pid PID[,PID2,...]    Custom PIDs for subtitle tracks (single value=auto-increment)\n");
     printf("      --ts-bitrate BPSI       Override MPEG-TS bitrate (muxrate) in bits per second\n");
     printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
     printf("      --enc-threads N         Encoder thread count (0=auto)\n");
     printf("      --render-threads N      Parallel render workers (0=single-thread)\n");
-    printf("      --bench                 Enable micro-bench timing output\n");    
+    printf("      --bench                 Enable micro-bench timing output\n");
     printf("      --debug N               Set debug verbosity (0=quiet,1=errors,2=verbose)\n");
     printf("      --license               Show license information and exit\n");
     printf("  -h, --help, -?              Show this help and exit\n\n");
     printf("Accepted DVB language codes:\n");
     printf("  Code  English / Native\n");
     printf("  ----  ----------------\n");
+    
     /* Print language table in dynamic columns based on terminal width. */
     int lang_count = 0;
-    while (dvb_langs[lang_count].code) lang_count++;
-    if (lang_count == 0) {
+    while (dvb_langs[lang_count].code)
+        lang_count++;
+    if (lang_count == 0)
+    {
         printf("\n");
-    } else {
+    }
+    else
+    {
         /* Build formatted entry strings and compute max length. */
         int fallback = 0;
         int allocated_entries = 0;
-        char **entries = calloc((size_t)lang_count, sizeof(char*));
+        char **entries = calloc((size_t)lang_count, sizeof(char *));
         size_t *elens = calloc((size_t)lang_count, sizeof(size_t));
         size_t *col_widths = NULL;
         size_t maxlen = 0; /* measured in display columns */
-        if (!entries || !elens) {
+        if (!entries || !elens)
+        {
             fallback = 1;
-            goto after_table;
+            print_language_table(dvb_langs, lang_count, entries, elens, col_widths,
+                                 allocated_entries, fallback);
+            return;
         }
-        for (int i = 0; i < lang_count; i++) {
+        for (int i = 0; i < lang_count; i++)
+        {
             const struct dvb_lang_entry *p = &dvb_langs[i];
             /* Format: "code  English / Native" */
             size_t need = snprintf(NULL, 0, "%s  %s / %s", p->code, p->ename, p->native) + 1;
             entries[i] = malloc(need);
-            if (!entries[i]) {
+            if (!entries[i])
+            {
                 fallback = 1;
-                goto after_table;
+                print_language_table(dvb_langs, lang_count, entries, elens, col_widths,
+                                     allocated_entries, fallback);
+                return;
             }
             allocated_entries = i + 1;
             snprintf(entries[i], need, "%s  %s / %s", p->code, p->ename, p->native);
             /* compute visual display width (handles UTF-8 and wide chars) */
             elens[i] = (size_t)utf8_display_width(entries[i]);
-            if (elens[i] > maxlen) maxlen = elens[i];
+            if (elens[i] > maxlen)
+                maxlen = elens[i];
         }
 
         /* Determine terminal width */
         int term_w = 80;
         struct winsize ws;
-        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) term_w = ws.ws_col;
-        else {
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+            term_w = ws.ws_col;
+        else
+        {
             char *cols_env = getenv("COLUMNS");
-            if (cols_env) term_w = atoi(cols_env);
+            if (cols_env)
+                term_w = atoi(cols_env);
         }
 
         const int gap = 4; /* spaces between columns */
         int cols = term_w / (int)(maxlen + gap);
-        if (cols < 1) cols = 1;
-        if (cols > lang_count) cols = lang_count;
+        if (cols < 1)
+            cols = 1;
+        if (cols > lang_count)
+            cols = lang_count;
 
         /* Try to fit by reducing columns until the computed column widths fit. */
         int rows = 0;
-        while (cols >= 1) {
+        while (cols >= 1)
+        {
             rows = (lang_count + cols - 1) / cols;
             /* compute per-column width */
             size_t *new_cols = calloc((size_t)cols, sizeof(size_t));
-            if (!new_cols) {
+            if (!new_cols)
+            {
                 fallback = 1;
-                goto after_table;
+                print_language_table(dvb_langs, lang_count, entries, elens, col_widths,
+                                     allocated_entries, fallback);
+                return;
             }
             free(col_widths);
             col_widths = new_cols;
-            for (int c = 0; c < cols; c++) {
+            for (int c = 0; c < cols; c++)
+            {
                 size_t w = 0;
-                for (int r = 0; r < rows; r++) {
+                for (int r = 0; r < rows; r++)
+                {
                     int idx = c * rows + r;
-                    if (idx >= lang_count) break;
-                    if (elens[idx] > w) w = elens[idx];
+                    if (idx >= lang_count)
+                        break;
+                    if (elens[idx] > w)
+                        w = elens[idx];
                 }
                 col_widths[c] = w;
             }
             /* total width */
             size_t total = 0;
-            for (int c = 0; c < cols; c++) total += col_widths[c];
+            for (int c = 0; c < cols; c++)
+                total += col_widths[c];
             total += (size_t)gap * (size_t)(cols - 1);
-            if ((int)total <= term_w) break; /* fits */
-            cols--; /* try fewer columns */
-            if (cols == 0) cols = 1;
+            if ((int)total <= term_w)
+                break; /* fits */
+            cols--;    /* try fewer columns */
+            if (cols == 0)
+                cols = 1;
         }
 
-after_table:
-        if (fallback) {
-            if (entries) {
-                for (int i = 0; i < allocated_entries; i++) free(entries[i]);
-            }
-            free(entries);
-            free(elens);
-            free(col_widths);
-            for (int i = 0; i < lang_count; i++) {
-                const struct dvb_lang_entry *p = &dvb_langs[i];
-                printf("  %s  %s / %s\n", p->code, p->ename, p->native);
-            }
-        } else {
-            /* Print rows */
-            for (int r = 0; r < rows; r++) {
-                for (int c = 0; c < cols; c++) {
-                    int idx = c * rows + r;
-                    if (idx >= lang_count) break;
-                    /* left-align in column width using display widths */
-                    printf("  %s", entries[idx]);
-                    /* pad with spaces based on display width, not byte length */
-                    int vis = utf8_display_width(entries[idx]);
-                    int pad = (int)col_widths[c] - vis;
-                    if (pad > 0) {
-                        for (int s = 0; s < pad; s++) putchar(' ');
-                    }
-                    if (c < cols - 1) {
-                        for (int s = 0; s < gap; s++) putchar(' ');
-                    }
-                }
-                printf("\n");
-            }
-
-            for (int i = 0; i < lang_count; i++) free(entries[i]);
-            free(entries);
-            free(elens);
-            free(col_widths);
-        }
+        print_language_table(dvb_langs, lang_count, entries, elens, col_widths,
+                             allocated_entries, fallback);
+        printf("\n");
     }
-    printf("\n");
 }
 
 /*
