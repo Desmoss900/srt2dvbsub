@@ -107,10 +107,12 @@ int video_h = 480;
  * Multiple values should be comma-separated. */
 char *pid_list = NULL;
 
-/* Override bitrate for MPEG-TS output (muxrate) in bits per second.
- * Set to a positive value to override auto-calculated bitrate.
- * 0 or negative means use auto-calculated bitrate from input file.
- * Example values: 12000000 (12 Mbps), 8000000 (8 Mbps), etc. */
+/* Controls how the muxer bitrate should be configured (default: leave unset). */
+TsBitrateMode ts_bitrate_mode = TS_BITRATE_MODE_UNSPECIFIED;
+
+/* Override bitrate for MPEG-TS output (muxrate) in bits per second when the
+ * mode is TS_BITRATE_MODE_FIXED. Example values: 12000000 (12 Mbps), 8000000
+ * (8 Mbps), etc. */
 int64_t ts_bitrate = 0;
 
 /* Enable PNG-only mode: render subtitles to PNG files without MPEG-TS output.

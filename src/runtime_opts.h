@@ -144,13 +144,26 @@ extern int video_h;
 extern char *pid_list;
 
 /**
+ * @brief Selects how the muxer bitrate should be configured.
+ *
+ * - TS_BITRATE_MODE_UNSPECIFIED: do not configure muxrate (libav defaults)
+ * - TS_BITRATE_MODE_AUTO: configure muxrate with the auto-detected bitrate
+ * - TS_BITRATE_MODE_FIXED: configure muxrate with the user-provided bitrate
+ */
+typedef enum {
+    TS_BITRATE_MODE_UNSPECIFIED = 0,
+    TS_BITRATE_MODE_AUTO,
+    TS_BITRATE_MODE_FIXED
+} TsBitrateMode;
+
+extern TsBitrateMode ts_bitrate_mode;
+
+/**
  * @brief Override bitrate for MPEG-TS output in bits per second.
  *
- * This external 64-bit integer variable specifies a custom bitrate (muxrate)
- * for the output MPEG-TS file. If set to a value greater than 0, it overrides
- * the auto-calculated bitrate. If 0 or negative, the auto-calculated bitrate
- * from the input file is used. Typical values range from 1000000 (1 Mbps) to
- * 50000000 (50 Mbps) depending on content requirements.
+ * Effective when ts_bitrate_mode == TS_BITRATE_MODE_FIXED. The value must be a
+ * positive integer (typically 1000000–50000000). Other modes ignore this
+ * variable and either skip configuring muxrate or use the auto-detected rate.
  */
 extern int64_t ts_bitrate;
 

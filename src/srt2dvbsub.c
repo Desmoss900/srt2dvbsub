@@ -685,25 +685,34 @@ static int cli_parse(int argc, char **argv,
             break;
         case 1024:
             {
-                /* Parse --ts-bitrate value */
+                if (strcasecmp(optarg, "auto") == 0) {
+                    ts_bitrate_mode = TS_BITRATE_MODE_AUTO;
+                    if (debug_level > 0) {
+                        LOG(1, "--ts-bitrate auto: will use detected input muxrate if available\n");
+                    }
+                    break;
+                }
+
+                /* Parse --ts-bitrate numeric value */
                 char *endptr = NULL;
                 errno = 0;
-                long bitrate_val = strtol(optarg, &endptr, 10);
+                long long bitrate_val = strtoll(optarg, &endptr, 10);
                 
                 /* Validate the bitrate value */
                 if (errno != 0 || endptr == optarg || *endptr != '\0' || bitrate_val <= 0) {
-                    LOG(0, "Invalid bitrate value '%s': must be a positive integer (bits per second)\n", optarg);
+                    LOG(0, "Invalid bitrate value '%s': must be a positive integer (bits per second) or 'auto'\n", optarg);
                     LOG(0, "Example: --ts-bitrate 12000000 (for 12 Mbps)\n");
                     return 1;
                 }
                 
                 /* Additional validation: reasonable bitrate range (100 kbps to 1 Gbps) */
                 if (bitrate_val < 100000 || bitrate_val > 1000000000LL) {
-                    LOG(0, "Bitrate %ld is outside reasonable range (100,000 to 1,000,000,000 bps)\n", bitrate_val);
+                    LOG(0, "Bitrate %lld is outside reasonable range (100,000 to 1,000,000,000 bps)\n", bitrate_val);
                     return 1;
                 }
                 
                 ts_bitrate = (int64_t)bitrate_val;
+                ts_bitrate_mode = TS_BITRATE_MODE_FIXED;
                 if (debug_level > 0) {
                     LOG(1, "Set custom MPEG-TS bitrate to %" PRId64 " bps (%.2f Mbps)\n",
                         ts_bitrate, ts_bitrate / 1000000.0);
@@ -2921,8 +2930,13 @@ int main(int argc, char **argv)
     av_dict_set(&mux_opts, "copyts", "1", 0);
     av_dict_set(&mux_opts, "start_at_zero", "1", 0);
 
-    /* Determine muxrate: use ts_bitrate override if specified, otherwise use auto-detected rate */
-    int64_t final_mux_rate = ts_bitrate > 0 ? ts_bitrate : ctx.mux_rate;
+    /* Determine muxrate based on requested mode */
+    int64_t final_mux_rate = 0;
+    if (ts_bitrate_mode == TS_BITRATE_MODE_FIXED) {
+        final_mux_rate = ts_bitrate;
+    } else if (ts_bitrate_mode == TS_BITRATE_MODE_AUTO) {
+        final_mux_rate = ctx.mux_rate;
+    }
     
     if (final_mux_rate > 0)
     {
@@ -2930,12 +2944,15 @@ int main(int argc, char **argv)
         snprintf(muxrate_buf, sizeof(muxrate_buf), "%lld", (long long)final_mux_rate);
         av_dict_set(&mux_opts, "muxrate", muxrate_buf, 0);
         if (debug_level > 0) {
-            if (ts_bitrate > 0) {
+            if (ts_bitrate_mode == TS_BITRATE_MODE_FIXED) {
                 LOG(1, "Using custom muxrate %" PRId64 " bps (user-specified via --ts-bitrate)\n", final_mux_rate);
             } else {
-                LOG(1, "Using auto-detected muxrate %" PRId64 " bps from input file\n", final_mux_rate);
+                LOG(1, "Using auto-detected muxrate %" PRId64 " bps from input file (--ts-bitrate auto)\n", final_mux_rate);
             }
         }
+    }
+    else if (ts_bitrate_mode == TS_BITRATE_MODE_AUTO) {
+        LOG(0, "Warning: --ts-bitrate auto requested but input muxrate could not be detected; muxrate option will be omitted\n");
     }
     else if (debug_level > 0) {
         LOG(1, "No muxrate specified; libav will auto-calculate based on stream requirements\n");
