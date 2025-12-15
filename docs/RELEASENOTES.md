@@ -1,41 +1,6 @@
 # srt2dvbsub Release Notes
 
-## **v0.0.1-beta-6**
-
-### New Functionality
-
-No new functionality, code cleanup only.
-
-### Changed Functionality
-
-#### 1. Revised `--ts-bitrate` Semantics
-- Default behavior now leaves the MPEG-TS muxer `muxrate` unset so libav applies its own rate control.
-- `--ts-bitrate auto` restores the previous auto-detected muxrate behavior, wiring the detected bitrate into the muxer.
-- Providing a numeric value (e.g., `--ts-bitrate 12000000`) continues to force that bitrate explicitly, unchanged from earlier releases.
-
-### Bugs Fixed
-
-None reported in this release.
-
-### New Issues
-
-None known at this time. Please report any issues encountered during testing.
-
-## **v0.0.1-beta-5**
-
-### New Functionality
-
-No new functionality, code cleanup only.
-
-### Bugs Fixed
-
-None reported in this release.
-
-### New Issues
-
-None known at this time. Please report any issues encountered during testing.
-
-## **v0.0.1-beta-4**
+## **v0.0.1-RC-1**
 
 ### New Functionality
 
@@ -108,6 +73,13 @@ None known at this time. Please report any issues encountered during testing.
 - **Resolution Independence**: All positioning and margins are percentage-based for consistent behavior across different resolutions
 - **Canvas Bounds Protection**: Automatic clamping prevents subtitles from extending beyond canvas edges
 - **Per-Track Configuration**: Each of 8 subtitle tracks can have independent positioning and margins
+
+### Changed Functionality
+
+#### 1. Revised `--ts-bitrate` Semantics
+- Default behavior now leaves the MPEG-TS muxer `muxrate` unset so libav applies its own rate control.
+- `--ts-bitrate auto` restores the previous auto-detected muxrate behavior, wiring the detected bitrate into the muxer.
+- Providing a numeric value (e.g., `--ts-bitrate 12000000`) continues to force that bitrate explicitly, unchanged from earlier releases.
 
 ### Bugs Fixed
 
