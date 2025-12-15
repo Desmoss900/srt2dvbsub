@@ -1,6 +1,6 @@
 # SOFTWARE LICENSE
 
-Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+Copyright (c) 2025 Mark E. Rosche, Capsaworks Project
 All rights reserved.
 
 ---
@@ -41,9 +41,9 @@ The following uses of this software are strictly prohibited:
 
 For inquiries regarding uses not explicitly permitted above, please contact:
 
-**Mark E. Rosche, Chili IPTV Systems**
-- Email: license@chili-iptv.de
-- Website: www.chili-iptv.de
+**Mark E. Rosche, Capsaworks Project**
+- Email: license@capsaworks-project.de
+- Website: www.capsaworks-project.de
 
 ---
 
@@ -308,7 +308,7 @@ By using this software, you agree to all terms and conditions contained in this 
 
 ## INTELLECTUAL PROPERTY RIGHTS
 
-All intellectual property rights in this software, including but not limited to copyrights, patents, trademarks, and trade secrets, are owned by Mark E. Rosche and Chili IPTV Systems. This license does not grant you any ownership rights or intellectual property rights in the software, only a limited right to use the software in accordance with the terms of this license.
+All intellectual property rights in this software, including but not limited to copyrights, patents, trademarks, and trade secrets, are owned by Mark E. Rosche and Capsaworks Project. This license does not grant you any ownership rights or intellectual property rights in the software, only a limited right to use the software in accordance with the terms of this license.
 
 ---
 

@@ -892,18 +892,18 @@ Common codes include:
 12.2 Commercial Licensing
   Commercial use (IPTV, broadcast, SaaS, etc.) requires:
   • Paid Commercial License from copyright holder
-  • Contact: license@chili-iptv.de
-  • Website: www.chili-iptv.de
+  • Contact: license@capsaworks-project.de
+  • Website: www.capsaworks-project.de
 
 12.3 Copyright
-  Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+  Copyright (c) 2025 Mark E. Rosche, Capsaworks Project
   All rights reserved.
 
 12.4 Support & Issues
   Report bugs and request features at:
   • GitHub Issues: [repository URL]
-  • Email: bugs@chili-iptv.de
-  • For licensing: license@chili-iptv.de
+  • Email: bugs@capsaworks-project.de
+  • For licensing: license@capsaworks-project.de
 
 
 13. TECHNICAL DETAILS

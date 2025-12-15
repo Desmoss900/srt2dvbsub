@@ -2,44 +2,44 @@
 
 ## **v0.0.1-beta-6**
 
-## New Functionality
+### New Functionality
 
 No new functionality, code cleanup only.
 
-## Changed Functionality
+### Changed Functionality
 
-### 1. Revised `--ts-bitrate` Semantics
+#### 1. Revised `--ts-bitrate` Semantics
 - Default behavior now leaves the MPEG-TS muxer `muxrate` unset so libav applies its own rate control.
 - `--ts-bitrate auto` restores the previous auto-detected muxrate behavior, wiring the detected bitrate into the muxer.
 - Providing a numeric value (e.g., `--ts-bitrate 12000000`) continues to force that bitrate explicitly, unchanged from earlier releases.
 
-## Bugs Fixed
+### Bugs Fixed
 
 None reported in this release.
 
-## New Issues
+### New Issues
 
 None known at this time. Please report any issues encountered during testing.
 
 ## **v0.0.1-beta-5**
 
-## New Functionality
+### New Functionality
 
 No new functionality, code cleanup only.
 
-## Bugs Fixed
+### Bugs Fixed
 
 None reported in this release.
 
-## New Issues
+### New Issues
 
 None known at this time. Please report any issues encountered during testing.
 
 ## **v0.0.1-beta-4**
 
-## New Functionality
+### New Functionality
 
-### 1. Custom Subtitle Track PID Assignment
+#### 1. Custom Subtitle Track PID Assignment
 - Added `--pid` command-line flag to enable user specification of DVB subtitle track PIDs
 - Supports two modes:
   - **Single PID with auto-increment**: `--pid 150` automatically assigns 150, 151, 152, etc. for multiple subtitle tracks
@@ -51,7 +51,7 @@ None known at this time. Please report any issues encountered during testing.
 - Comprehensive error messages for all validation failures
 - Debug logging shows all PID assignments when debug level > 0
 
-### 2. Manual MPEG-TS Bitrate Control
+#### 2. Manual MPEG-TS Bitrate Control
 - Added `--ts-bitrate` command-line flag to override automatic bitrate calculation
 - Accepts numeric bitrate values in bits per second (bps)
 - Valid range: 100,000 to 1,000,000,000 bps
@@ -66,7 +66,7 @@ None known at this time. Please report any issues encountered during testing.
   - Broadcast standard compliance with specific bitrate constraints
 - Debug output shows whether using user-specified or auto-detected bitrate
 
-### 3. Independent PNG Output Generation
+#### 3. Independent PNG Output Generation
 - Added `--png-only` command-line flag for standalone PNG rendering without full MPEG-TS encoding
 - Added `--png-dir` flag to specify output directory for PNG files
 - Decouples PNG generation from debug logging (no stderr clutter)
@@ -82,7 +82,7 @@ None known at this time. Please report any issues encountered during testing.
   - Testing rendering accuracy without full MPEG-TS overhead
   - Creating thumbnail images for review workflows
 
-### 4. Advanced Subtitle Canvas Positioning
+#### 4. Advanced Subtitle Canvas Positioning
 - Implemented comprehensive 9-position grid system for subtitle placement
 - **CLI Position Options**: `--sub-position` flag supports 9 positions:
   - `top-left`, `top-center`, `top-right`
@@ -109,10 +109,10 @@ None known at this time. Please report any issues encountered during testing.
 - **Canvas Bounds Protection**: Automatic clamping prevents subtitles from extending beyond canvas edges
 - **Per-Track Configuration**: Each of 8 subtitle tracks can have independent positioning and margins
 
-## Bugs Fixed
+### Bugs Fixed
 
 None reported in this release.
 
-## New Issues
+### New Issues
 
 None known at this time. Please report any issues encountered during testing.

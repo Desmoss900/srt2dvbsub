@@ -3,7 +3,7 @@
 /*  EXPERIEMENTAL PROGRAM -- EXPERIMENTAL PROGRAM  */
 /*  EXPERIEMENTAL PROGRAM -- EXPERIMENTAL PROGRAM  */
 /*
-* Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+* Copyright (c) 2025 Mark E. Rosche, Capsaworks Project
 * All rights reserved.
 *
 * This software is licensed under the "Personal Use License" described below.
@@ -27,9 +27,9 @@
 * requires a separate **Commercial License** from the copyright holder.
 *
 * To obtain a commercial license, please contact:
-*   [Mark E. Rosche | Chili-IPTV Systems]
-*   Email: [license@chili-iptv.de]  
-*   Website: [www.chili-iptv.de]
+*   [Mark E. Rosche | Capsaworks Project]
+*   Email: [license@capsaworks-project.de]  
+*   Website: [www.capsaworks-project.de]
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER

@@ -534,7 +534,7 @@ After successful build and installation:
 
 4. **Report Issues**
    - GitHub: [srt2dvbsub Issues](https://github.com/Desmoss900/srt2dvbsub/issues)
-   - Email: bugs@chili-iptv.de
+  - Email: bugs@capsaworks-project.de
 
 ---
 

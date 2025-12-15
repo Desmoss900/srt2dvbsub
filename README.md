@@ -330,18 +330,18 @@ srt2dvbsub --qc-only --srt subtitles.srt --languages eng
 **Personal Use License**: Free for personal, educational, and non-commercial use.
 
 **Commercial Use**: Requires paid Commercial License from copyright holder.
-- Contact: license@chili-iptv.de
-- Website: www.chili-iptv.de
+- Contact: license@capsaworks-project.de
+- Website: www.capsaworks-project.de
 
 See `--license` flag for full terms and warranty disclaimer.
 
 ## Support
 
-- **Bugs & Features**: bugs@chili-iptv.de
-- **Licensing**: license@chili-iptv.de
+- **Bugs & Features**: bugs@capsaworks-project.de
+- **Licensing**: license@capsaworks-project.de
 - **Repository**: [GitHub - srt2dvbsub](https://github.com/Desmoss900/srt2dvbsub)
 
 ---
 
-**Copyright © 2025 Mark E. Rosche, Chili IPTV Systems**  
+**Copyright © 2025 Mark E. Rosche, Capsaworks Project**  
 All rights reserved.

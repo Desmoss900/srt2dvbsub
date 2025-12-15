@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems
+* Copyright (c) 2025 Mark E. Rosche, Capsaworks Project
 * All rights reserved.
 *
 * PERSONAL USE LICENSE - NON-COMMERCIAL ONLY
@@ -26,9 +26,9 @@
 *
 * No commercial license is available. For inquiries regarding any use not
 * explicitly permitted above, contact:
-*   Mark E. Rosche, Chili IPTV Systems
-*   Email: license@chili-iptv.de
-*   Website: www.chili-iptv.de
+*   Mark E. Rosche, Capsaworks Project
+*   Email: license@capsaworks-project.de
+*   Website: www.capsaworks-project.de
 *
 * ────────────────────────────────────────────────────────────────
 * DISCLAIMER
@@ -456,7 +456,7 @@ void print_version(void)
 void print_license(void)
 {
     printf("\n");
-    printf("Copyright (c) 2025 Mark E. Rosche, Chili IPTV Systems\n");
+    printf("Copyright (c) 2025 Mark E. Rosche, Capsaworks Project\n");
     printf("All rights reserved.\n");
     printf("\n");
     printf("PERSONAL USE LICENSE - NON-COMMERCIAL ONLY\n");
@@ -483,9 +483,9 @@ void print_license(void)
     printf("\n");
     printf("No commercial license is available. For inquiries regarding any use not\n");
     printf("explicitly permitted above, contact:\n");
-    printf("  Mark E. Rosche, Chili IPTV Systems\n");
-    printf("  Email: license@chili-iptv.de\n");
-    printf("  Website: www.chili-iptv.de\n");
+    printf("  Mark E. Rosche, Capsaworks Project\n");
+    printf("  Email: license@capsaworks-project.de\n");
+    printf("  Website: www.capsaworks-project.de\n");
     printf("\n");
     printf("────────────────────────────────────────────────────────────────\n");
     printf("DISCLAIMER\n");

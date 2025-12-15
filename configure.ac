@@ -1,4 +1,4 @@
-AC_INIT([srt2dvbsub], [0.0.1], [bugs@chili-iptv.de])
+AC_INIT([srt2dvbsub], [0.0.1], [bugs@capsaworks-project.de])
 
 # Default to disabling Automake dependency-tracking unless explicitly enabled.
 # This makes the common developer/workflow faster (no per-file dep-tracking)
