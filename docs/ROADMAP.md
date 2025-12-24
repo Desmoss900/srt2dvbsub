@@ -4,8 +4,12 @@
 
 # srt2dvbsub Development Roadmap   *(started after v0.0.1-beta-3)*
 
+<p align="center">
 
-## Roadmap Summary & Priority Matrix
+### Roadmap Summary & Priority Matrix
+
+</p>
+<p align="center">
 
 | Priority | Category | Feature |  Item  | Tentative Version | Completed |
 |----------|----------|---------|:--------:|:------------------:|:-----------:|
@@ -19,19 +23,20 @@
 | **MEDIUM** | Rendering | Advanced Subtitle Effects and Transforms | [#8](#8-advanced-subtitle-effects-and-transforms) | v0.0.3 | |
 | **MEDIUM** | Input Formats | Multi-Format Subtitle Input Support | [#9](#9-multi-format-subtitle-input-support) | v0.0.4 | |
 | **MEDIUM** | Configuration | Rendering Presets and Profiles | [#10](#10-rendering-presets-and-profiles) | v0.0.4 | |
-| **MEDIUM** | Broadcast | Real-Time Live Subtitle Encoding | [#11](#11-real-time-live-subtitle-encoding) | v1.0.0 | |
-| **MEDIUM** | Localization | Intelligent Multi-Language Font Selection | [#12](#12-intelligent-multi-language-font-selection) | v1.0.0 | |
-| **MEDIUM** | Broadcast | Regional dvb Compliance Profiles | [#13](#13-regional-dvb-compliance-profiles) | v1.0.0 | |
-| **MEDIUM** | Accessibility | Accessibility and Color Management | [#14](#14-accessibility-and-color-management) | v1.0.0 | |
-| **LOW** | Quality Control | Comprehensive Telemetry and Analytics | [#15](#15-comprehensive-telemetry-and-analytics) | v1.0.1 | |
-| **LOW** | Configuration | CSS-Style Subtitle Styling | [#16](#16-css-style-subtitle-styling) | v1.0.1 | |
-| **LOW** | Workflow | Subtitle Review and Approval Workflow | [#17](#17-subtitle-review-and-approval-workflow) | v1.0.1 | |
-| **LOW** | Broadcast | Broadcast-Safe Area Enforcement | [#18](#18-broadcast-safe-area-enforcement) | v1.0.2 | |
-| **LOW** | Security | Subtitle Watermarking and Fingerprinting | [#19](#19-subtitle-watermarking-and-fingerprinting) | v1.0.2 | |
-| **LOW** | Content Moderation | Advanced Text Filtering and Cleanup | [#20](#20-advanced-text-filtering-and-cleanup) | v1.1.0 | |
-| **LOW** | Quality Control | Multi-Track Consistency Verification | [#21](#21-multi-track-consistency-verification) | v1.1.0 | |
-| **LOW** | Batch Processing | Subtitle Source Verification and Manifest Generation | [#22](#22-subtitle-source-verification-and-manifest-generation) | v1.2.0 | |
+| **MEDIUM** | Localization | Intelligent Multi-Language Font Selection | [#11](#11-intelligent-multi-language-font-selection) | v1.0.0 | |
+| **MEDIUM** | Broadcast | Regional dvb Compliance Profiles | [#12](#12-regional-dvb-compliance-profiles) | v1.0.0 | |
+| **MEDIUM** | Accessibility | Accessibility and Color Management | [#13](#13-accessibility-and-color-management) | v1.0.0 | |
+| **LOW** | Quality Control | Comprehensive Telemetry and Analytics | [#14](#14-comprehensive-telemetry-and-analytics) | v1.0.1 | |
+| **LOW** | Configuration | CSS-Style Subtitle Styling | [#15](#15-css-style-subtitle-styling) | v1.0.1 | |
+| **LOW** | Workflow | Subtitle Review and Approval Workflow | [#16](#16-subtitle-review-and-approval-workflow) | v1.0.1 | |
+| **LOW** | Broadcast | Broadcast-Safe Area Enforcement | [#17](#17-broadcast-safe-area-enforcement) | v1.0.2 | |
+| **LOW** | Security | Subtitle Watermarking and Fingerprinting | [#18](#18-subtitle-watermarking-and-fingerprinting) | v1.0.2 | |
+| **LOW** | Content Moderation | Advanced Text Filtering and Cleanup | [#19](#19-advanced-text-filtering-and-cleanup) | v1.1.0 | |
+| **LOW** | Quality Control | Multi-Track Consistency Verification | [#20](#20-multi-track-consistency-verification) | v1.1.0 | |
+| **LOW** | Batch Processing | Subtitle Source Verification and Manifest Generation | [#21](#21-subtitle-source-verification-and-manifest-generation) | v1.2.0 | |
+| **LOW** | Broadcast | Real-Time Live Subtitle Encoding | [#22](#22-real-time-live-subtitle-encoding) | | |
 
+</p>
 ---
 
 # Feature Details by Category
@@ -473,22 +478,9 @@ Implement additional logic to introduce a configuration system that allows users
     --preset custom-streaming  # user-defined custom preset
 ```
 
-## Broadcast & Live Operations
-
-### 11. Real-Time Live Subtitle Encoding
-Implement additional logic to enable srt2dvbsub to process subtitle streams in real-time for live broadcasting scenarios. It accepts subtitle input from UDP sockets or similar streaming mechanisms and encodes them as subtitle events arrive, integrating seamlessly with live video encoding pipelines. This is essential for broadcast environments where subtitles are generated on-the-fly.
-
-    - Accept subtitle input from udp sockets or other input mechanism
-    - Stream subtitle encoding as events arrive
-    - Integration with live broadcasting workflows
-```
-    Example:
-    tsp ... | srt2dvbsub --live --input-socket udp://:4501 | tsp -O file.ts
-```
-
 ## Localization & Internationalization
 
-### 12. Intelligent Multi-Language Font Selection
+### 11. Intelligent Multi-Language Font Selection
 Implement additional logic to intelligently select appropriate fonts for different writing systems and languages. It should automatically detect non-Latin scripts (CJK, Arabic, Cyrillic, etc.) and applies suitable fonts to ensure proper rendering. The system should support font fallback chains for mixed-language subtitles, allowing seamless display of multilingual content without manual intervention.
 
     - Detect non-Latin scripts (CJK, Arabic, Cyrillic, etc.)
@@ -501,7 +493,7 @@ Implement additional logic to intelligently select appropriate fonts for differe
 
 ## Standards & Compliance
 
-### 13. Regional dvb Compliance Profiles
+### 12. Regional dvb Compliance Profiles
 Implement additional logic to ensure subtitle compliance with regional broadcasting standards and regulations. Different regions (UK, Nordic countries, Australia, etc.) have specific dvb requirements for subtitle encoding, color palettes, and metadata. The feature automates compliance checking and applies region-specific language defaults, reducing manual configuration and ensuring broadcast-ready output for target markets.
 
     - Different standards for different regions (UK dvb, Nordic dvb, etc.)
@@ -515,7 +507,7 @@ Implement additional logic to ensure subtitle compliance with regional broadcast
 
 ## Accessibility & Usability
 
-### 14. Accessibility and Color Management
+### 13. Accessibility and Color Management
 Implement additional logic to prioritize inclusivity by providing tools for accessible subtitle creation. It includes high-contrast rendering modes for users with visual impairments, automatic colorblind-safe palette generation, and WCAG standard compliance validation. Dynamic text sizing adapts to ensure readability across different broadcast resolutions and viewing distances, making subtitles accessible to diverse audiences.
 
     - High-contrast mode for accessibility
@@ -529,7 +521,7 @@ Implement additional logic to prioritize inclusivity by providing tools for acce
 
 ## Quality Control & Analytics
 
-### 15. Comprehensive Telemetry and Analytics
+### 14. Comprehensive Telemetry and Analytics
 Implement additional logic to provide detailed insights into subtitle rendering performance and coverage. It generates frame-by-frame rendering statistics showing exactly where and how subtitles appear in the video. Analytics include subtitle coverage percentages, color distribution analysis, and file size optimization suggestions. This data helps users understand subtitle effectiveness and identify optimization opportunities.
 
     - Detailed frame-by-frame rendering statistics
@@ -543,7 +535,7 @@ Implement additional logic to provide detailed insights into subtitle rendering 
 
 ## Styling & Formatting
 
-### 16. CSS-Style Subtitle Styling
+### 15. CSS-Style Subtitle Styling
 Implement additional logic to introduce familiar CSS-like syntax for defining subtitle styles, making it accessible to web developers and designers. Style definitions can be applied globally to all subtitle tracks or configured per-track for fine-grained control. Styles are saved as reusable definitions, enabling consistent styling across batch jobs and projects. This declarative approach simplifies subtitle styling management.
 
     - CSS-like syntax for defining subtitle styles
@@ -561,7 +553,7 @@ Implement additional logic to introduce familiar CSS-like syntax for defining su
 
 ## Professional Workflow & QA
 
-### 17. Subtitle Review and Approval Workflow
+### 16. Subtitle Review and Approval Workflow
 Implement additional logic to enable collaborative subtitle quality control and approval processes. It generates preview video clips for each subtitle segment, allowing reviewers to see subtitles in context. The system stores review comments, tracks changes and versions, and generates quality reports documenting approval status. This workflow is essential for professional content production pipelines requiring formal QA processes.
 
     - Generate preview video clips of subtitle segments
@@ -576,7 +568,7 @@ Implement additional logic to enable collaborative subtitle quality control and 
 
 ## Broadcast Standards & Safety
 
-## 18. Broadcast-Safe Area Enforcement
+## 17. Broadcast-Safe Area Enforcement
 This ensures subtitles avoid critical display areas where they might be obscured or violate broadcast standards. It allows definition of "safe zones" to prevent overlapping with channel logos, closed captioning areas, or image letterboxing. The system can auto-detect scene transitions and dynamic letterboxing, automatically repositioning subtitles to maintain visibility. Warnings alert users when subtitles would violate safe area constraints.
 
     - Define "safe areas" where subtitles should not appear (e.g., avoid top/bottom bars, channel logos)
@@ -591,7 +583,7 @@ This ensures subtitles avoid critical display areas where they might be obscured
 
 ## Security & Content Protection
 
-## 19. Subtitle Watermarking and Fingerprinting
+## 18. Subtitle Watermarking and Fingerprinting
 This adds security and tracking capabilities to subtitle streams through embedded metadata. Watermarks and fingerprints are embedded in the dvb subtitle stream using user_data fields, allowing tracking of subtitle encoding sessions, versions, and timestamps. Copyright and attribution information can be embedded for content protection. This is valuable for managing content distribution rights and tracking subtitle origins.
 
     - Embed metadata in dvb subtitle stream (via user_data fields)
@@ -606,7 +598,7 @@ This adds security and tracking capabilities to subtitle streams through embedde
 
 ## Content Moderation & Compliance
 
-## 20. Advanced Text Filtering and Cleanup
+## 19. Advanced Text Filtering and Cleanup
 This provides tools for content moderation and text normalization in subtitle streams. It allows filtering and replacing offensive or problematic words using configurable word lists, enabling content teams to maintain appropriate language standards. The system can be customized for different broadcasting regulations and audience guidelines, ensuring compliance with content policies.
 
     - Filter/replace offensive or problematic words (configurable list)
@@ -617,7 +609,7 @@ This provides tools for content moderation and text normalization in subtitle st
 
 ## Batch Processing & Verification
 
-## 21. Multi-Track Consistency Verification
+## 20. Multi-Track Consistency Verification
 This ensures quality and consistency across multilingual subtitle streams. It verifies that all subtitle tracks maintain synchronized timing structures and flags significant timing gaps or overlaps between tracks. The system detects missing subtitle tracks when audio languages exist without corresponding subtitle translations. Consistency reports provide detailed analysis to help identify synchronization issues before broadcast.
 
     - Verify consistent timing structure across all subtitle tracks
@@ -632,7 +624,7 @@ This ensures quality and consistency across multilingual subtitle streams. It ve
 
 ## Batch Integrity & Archival
 
-## 22. Subtitle Source Verification and Manifest Generation
+## 21. Subtitle Source Verification and Manifest Generation
 This provides source integrity verification and comprehensive tracking for batch subtitle jobs. It validates subtitle source files through checksum and hash verification, ensuring files haven't been corrupted or tampered with. The system can validate against known good subtitle versions for consistency. Manifest files generated for batch jobs track all source materials, versions, and metadata, creating an auditable record of subtitle encoding history for compliance and archival purposes.
 
     - Checksum/hash verification of SRT files
@@ -643,4 +635,19 @@ This provides source integrity verification and comprehensive tracking for batch
     Example:
     --verify-sources --generate-manifest
     --manifest-file job_manifest.json
+```
+
+## Broadcast & Live Operations
+
+### 22. Real-Time Live Subtitle Encoding
+Implement additional logic to enable srt2dvbsub to process subtitle streams in real-time for live broadcasting scenarios. It accepts subtitle input from UDP sockets or similar streaming mechanisms and encodes them as subtitle events arrive, integrating seamlessly with live video encoding pipelines. This is essential for broadcast environments where subtitles are generated on-the-fly.
+
+Specification status: see [LIVE_SUBTITLING_UDP_RTP_IDEA.md](../ideas/LIVE_SUBTITLING_UDP_RTP_IDEA.md)
+
+    - Accept subtitle input from udp sockets or other input mechanism
+    - Stream subtitle encoding as events arrive
+    - Integration with live broadcasting workflows
+```
+    Example:
+    tsp ... | srt2dvbsub --live --input-socket udp://:4501 | tsp -O file.ts
 ```
