@@ -202,8 +202,32 @@ struct MainCtx {
 
 static void ctx_cleanup(struct MainCtx *ctx);
 
+/* Human-readable name for subtitle positioning enum */
+static const char *subtitle_position_name(SubtitlePosition pos)
+{
+    switch (pos)
+    {
+    case SUB_POS_TOP_LEFT: return "top-left";
+    case SUB_POS_TOP_CENTER: return "top-center";
+    case SUB_POS_TOP_RIGHT: return "top-right";
+    case SUB_POS_MID_LEFT: return "middle-left";
+    case SUB_POS_MID_CENTER: return "middle-center";
+    case SUB_POS_MID_RIGHT: return "middle-right";
+    case SUB_POS_BOT_LEFT: return "bottom-left";
+    case SUB_POS_BOT_CENTER: return "bottom-center";
+    case SUB_POS_BOT_RIGHT: return "bottom-right";
+    default: return "unknown";
+    }
+}
+
 /* signal handling: set this flag in the handler and check in main loops */
 static volatile sig_atomic_t stop_requested = 0;
+
+/* CLI margin overrides applied after parsing; -1 means "no override" */
+static double margin_override_top = -1.0;
+static double margin_override_left = -1.0;
+static double margin_override_bottom = -1.0;
+static double margin_override_right = -1.0;
 
 /* Monotonic sequence used when writing debug PNG filenames. */
 static int __srt_png_seq = 0;
@@ -340,8 +364,11 @@ static int cli_parse(int argc, char **argv,
     if (cli_font_style && ctx)
         ctx->cli_font_style = *cli_font_style;
 
-    /* Variables to track individual margin overrides */
-    double margin_top = -1.0, margin_left = -1.0, margin_bottom = -1.0, margin_right = -1.0;
+    /* Reset margin overrides for this parse */
+    margin_override_top = -1.0;
+    margin_override_left = -1.0;
+    margin_override_bottom = -1.0;
+    margin_override_right = -1.0;
 
     while ((opt = getopt_long(argc, argv, "I:o:s:l:h?", long_opts, &long_index)) != -1)
     {
@@ -476,7 +503,7 @@ static int cli_parse(int argc, char **argv,
                     LOG(0, "Invalid margin-top value: must be a number between 0.0 and 50.0\n");
                     return 1;
                 }
-                margin_top = val;
+                margin_override_top = val;
                 LOG(2, "margin-top set to %.1f%%\n", val);
             }
             break;
@@ -490,7 +517,7 @@ static int cli_parse(int argc, char **argv,
                     LOG(0, "Invalid margin-left value: must be a number between 0.0 and 50.0\n");
                     return 1;
                 }
-                margin_left = val;
+                margin_override_left = val;
                 LOG(2, "margin-left set to %.1f%%\n", val);
             }
             break;
@@ -504,7 +531,7 @@ static int cli_parse(int argc, char **argv,
                     LOG(0, "Invalid margin-bottom value: must be a number between 0.0 and 50.0\n");
                     return 1;
                 }
-                margin_bottom = val;
+                margin_override_bottom = val;
                 LOG(2, "margin-bottom set to %.1f%%\n", val);
             }
             break;
@@ -518,7 +545,7 @@ static int cli_parse(int argc, char **argv,
                     LOG(0, "Invalid margin-right value: must be a number between 0.0 and 50.0\n");
                     return 1;
                 }
-                margin_right = val;
+                margin_override_right = val;
                 LOG(2, "margin-right set to %.1f%%\n", val);
             }
             break;
@@ -731,58 +758,6 @@ static int cli_parse(int argc, char **argv,
         default:
             print_help();
             return 1;
-        }
-    }
-
-    /* Build positioning spec string with margin overrides if any were provided */
-    if (margin_top >= 0.0 || margin_left >= 0.0 || margin_bottom >= 0.0 || margin_right >= 0.0) {
-        /* If no position spec yet, use default bottom-center */
-        if (!sub_position_spec) {
-            sub_position_spec = strdup("bottom-center");
-            if (!sub_position_spec) {
-                LOG(0, "Out of memory while building positioning spec\n");
-                return 1;
-            }
-        }
-        
-        /* Build margin suffix for spec (max ~64 chars: "margin_top,margin_left,margin_bottom,margin_right") */
-        char margin_str[128] = {0};
-        snprintf(margin_str, sizeof(margin_str), ",%s%s%s%s",
-                 margin_top >= 0.0 ? "skip" : "",     /* placeholder - will replace with actual values */
-                 margin_left >= 0.0 ? "skip" : "",
-                 margin_bottom >= 0.0 ? "skip" : "",
-                 margin_right >= 0.0 ? "skip" : "");
-        
-        /* Actually, let's build it properly with the actual margin values */
-        if (margin_top >= 0.0 || margin_left >= 0.0 || margin_bottom >= 0.0 || margin_right >= 0.0) {
-            char *new_spec = NULL;
-            size_t spec_len = strlen(sub_position_spec) + 256;
-            new_spec = malloc(spec_len);
-            if (!new_spec) {
-                LOG(0, "Out of memory while building positioning spec with margins\n");
-                return 1;
-            }
-            
-            snprintf(new_spec, spec_len, "%s",  sub_position_spec);
-            
-            /* Append margins if any were specified */
-            if (margin_top >= 0.0 || margin_left >= 0.0 || margin_bottom >= 0.0 || margin_right >= 0.0) {
-                /* Use provided margins, fill defaults where not specified */
-                double mt = margin_top >= 0.0 ? margin_top : 3.5;
-                double ml = margin_left >= 0.0 ? margin_left : 3.5;
-                double mb = margin_bottom >= 0.0 ? margin_bottom : 3.5;
-                double mr = margin_right >= 0.0 ? margin_right : 3.5;
-                
-                char margin_suffix[200];
-                snprintf(margin_suffix, sizeof(margin_suffix), ",%.1f,%.1f,%.1f,%.1f", mt, ml, mb, mr);
-                strncat(new_spec, margin_suffix, spec_len - strlen(new_spec) - 1);
-            }
-            
-            free(sub_position_spec);
-            sub_position_spec = new_spec;
-            if (*debug_level > 0) {
-                LOG(1, "Positioning spec with margins: %s\n", sub_position_spec);
-            }
         }
     }
 
@@ -2581,8 +2556,8 @@ int main(int argc, char **argv)
     /* 0 means "not set" — let render_pango compute dynamic sizing based on resolution */
     int cli_fontsize = 0;
     
-    /* Default subtitle position: 5% from bottom */
-    double sub_position_pct = 5.0;
+    /* Subtitle position (legacy field: express as bottom margin percent for console output/logging) */
+    double sub_position_pct = 0.0;
 
     /*
      * cli_fgcolor: Foreground color for subtitle text, specified as a hex string compatible with Pango.
@@ -2642,11 +2617,11 @@ int main(int argc, char **argv)
         return finalize_main(&ctx, ctx_cleaned, parse_status);
 
     /*
-     * Parse subtitle positioning specification if provided.
+     * Parse subtitle positioning specification (NULL means defaults),
+     * then apply any global CLI margin overrides to every track.
      * Format: "position[,margin_top,margin_left,margin_bottom,margin_right];..."
-     * Example: "bottom-center,5.0" or "top-left,3.0,2.0;bottom-center"
      */
-    if (sub_position_spec) {
+    {
         char errmsg[256];
         int ret = parse_subtitle_positions(sub_position_spec, sub_pos_configs, 8, errmsg);
         if (ret != 0) {
@@ -2656,9 +2631,41 @@ int main(int argc, char **argv)
             return finalize_main(&ctx, ctx_cleaned, ret);
         }
         if (debug_level > 0) {
-            LOG(1, "Subtitle positioning configured: %s\n", sub_position_spec);
+            if (sub_position_spec) {
+                LOG(1, "Subtitle positioning configured: %s\n", sub_position_spec);
+            } else {
+                LOG(1, "Subtitle positioning configured: default (bottom-center)\n");
+            }
         }
     }
+
+    if (margin_override_top >= 0.0 || margin_override_left >= 0.0 ||
+        margin_override_bottom >= 0.0 || margin_override_right >= 0.0) {
+        for (int i = 0; i < 8; ++i) {
+            if (margin_override_top >= 0.0) {
+                sub_pos_configs[i].margin_top = margin_override_top;
+            }
+            if (margin_override_left >= 0.0) {
+                sub_pos_configs[i].margin_left = margin_override_left;
+            }
+            if (margin_override_bottom >= 0.0) {
+                sub_pos_configs[i].margin_bottom = margin_override_bottom;
+            }
+            if (margin_override_right >= 0.0) {
+                sub_pos_configs[i].margin_right = margin_override_right;
+            }
+        }
+        if (debug_level > 0) {
+            LOG(1, "Applied CLI margin overrides: top=%.1f%% left=%.1f%% bottom=%.1f%% right=%.1f%%\n",
+                margin_override_top >= 0.0 ? margin_override_top : sub_pos_configs[0].margin_top,
+                margin_override_left >= 0.0 ? margin_override_left : sub_pos_configs[0].margin_left,
+                margin_override_bottom >= 0.0 ? margin_override_bottom : sub_pos_configs[0].margin_bottom,
+                margin_override_right >= 0.0 ? margin_override_right : sub_pos_configs[0].margin_right);
+        }
+    }
+
+    /* Derive legacy bottom-position pct from parsed config for console output */
+    sub_position_pct = sub_pos_configs[0].margin_bottom;
 
     /*
      * Configure libav logging verbosity to match our --debug level. We map
@@ -2804,15 +2811,22 @@ int main(int argc, char **argv)
     /* Calculate the actual fontsize (adaptive or user-provided) now that video_h is known */
     int actual_fontsize = calculate_fontsize(cli_fontsize, video_h);
     
-    /* Output encoding status with font information (suppress in QC-only mode) */
+    /* Output encoding status with font and positioning (suppress in QC-only mode) */
     if (!qc_only) {
+        SubtitlePositionConfig *pc = &sub_pos_configs[0];
         printf("Encoding the subtitles with font: %s", resolved_font);
         if (resolved_style) {
             printf(" and style: %s", resolved_style);
         } else {
             printf(" and style: (default)");
         }
-        printf(", fontsize: %d, position: %.1f%% from bottom\n\n", actual_fontsize, sub_position_pct);
+        printf(", fontsize: %d, position: %s (margins: top=%.1f%% left=%.1f%% bottom=%.1f%% right=%.1f%%)\n\n",
+               actual_fontsize,
+               subtitle_position_name(pc->position),
+               pc->margin_top,
+               pc->margin_left,
+               pc->margin_bottom,
+               pc->margin_right);
     }
 
     /* mirror ctx-owned format contexts and parsed delay_vals into local vars for the rest of main */
