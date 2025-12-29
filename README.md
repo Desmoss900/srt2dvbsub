@@ -31,6 +31,16 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 -  Full rendering control (fonts, colors, sizing)
 -  Per-track language codes and flags (forced, hearing-impaired)
 
+---
+
+-  ** **NEW** ** PID preservation: mirror input MPEG-TS PIDs for A/V streams and allocate <br/>
+   subtitle PIDs for new subtitle tracks
+-  ** **NEW** ** Subtitle Track Overwrite to replace the first matching input dvbsub<br/>
+   track per language by reusing the original stream slot and PID (SPTS-only) 
+
+---
+
+
 ## Quick Start
 
 ### Installation
@@ -83,7 +93,7 @@ srt2dvbsub \
   --output video_styled.ts \
   --srt subtitles.srt \
   --languages eng \
-  --font "Liberation Sans" \
+  --font "Open Sans" \
   --fontsize 40 \
   --fgcolor "#ffffff" \
   --outlinecolor "#000000" \

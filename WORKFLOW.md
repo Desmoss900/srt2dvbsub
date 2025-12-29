@@ -292,7 +292,7 @@ Subtitle Files:
 MPEG-TS Output:
 - film_2021_4k_with_subs.ts (PIDs: 150, 151, 152)
 - Created: 2024-11-25
-- Verified with: VLC 3.0.20
+- Verified with: VLC 3.0.20, MPV v0.40.0
 
 Notes:
 - German subtitle delay adjusted by +200ms
@@ -376,7 +376,7 @@ cp film_2021_uhd_25fps_with_subs.ts archive/film_2021/mpeg_ts_files/
 
 ### Subtitles Won't Embed
 
-- Verify MPEG-TS file has null packet stuffing headroom
+- Verify MPEG-TS file has null packet stuffing headroom (this should automatically happen if you do not specify a --ts-bitrate)
 - Check srt2dvbsub error messages in stderr
 - Ensure SRT file encoding is UTF-8
 - Try with different PIDs if conflict suspected (roadmap item)

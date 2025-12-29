@@ -42,8 +42,8 @@ The following uses of this software are strictly prohibited:
 For inquiries regarding uses not explicitly permitted above, please contact:
 
 **Mark E. Rosche, Capsaworks Project**
-- Email: license@capsaworks-project.de
-- Website: www.capsaworks-project.de
+- Email: license@capsaworks-project.de [Not yet active]
+- Website: www.capsaworks-project.de [Not yet active]
 
 ---
 
