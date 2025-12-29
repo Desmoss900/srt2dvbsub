@@ -1,5 +1,45 @@
 # srt2dvbsub Release Notes
 
+## **v0.0.1-RC-3**
+
+### New Functionality
+
+#### 1. PID Preservation
+- Added default mirroring of input MPEG-TS PIDs for audio/video streams and sequential dvbsub PID allocation after the highest observed PID.
+- Introduced `--no-preserve-pids` to opt out and fall back to legacy libav PID assignment while still honoring `--pid` overrides.
+- Added validation to prevent PID collisions and clearer diagnostics for auto-assigned subtitle PIDs.
+
+#### 2. Subtitle Track Overwrite
+- Added `--overwrite` to replace the first matching input DVB subtitle track per language instead of always appending new tracks.
+- Reuses the original subtitle PID and stream slot when overwriting; falls back to creating a new track if no match is found, with warnings.
+- Enforces SPTS-only behavior for overwrite (errors on MPTS/multiple PMTs) and drops original subtitle packets on overwritten streams so only the new payload remains.
+
+### Changed Functionality
+
+No changes.
+
+### Bugs Fixed
+
+None known at this time. Please report any issues encountered during testing.
+
+## **v0.0.1-RC-2**
+
+### New Functionality
+
+Enhanced the console output to properly display the configured position as well as the configured margins.
+
+### Changed Functionality
+
+No changes.
+
+### Bugs Fixed
+
+Fixed a bug where the --margin-* flags were not being respected.
+
+### New Issues
+
+None known at this time. Please report any issues encountered during testing.
+
 ## **v0.0.1-RC-1**
 
 ### New Functionality

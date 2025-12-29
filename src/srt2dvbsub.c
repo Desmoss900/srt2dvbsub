@@ -135,6 +135,21 @@
 #define PCR_BIAS_MS 700
 #define PCR_BIAS_TICKS (PCR_BIAS_MS * 90)
 
+/* Maximum number of input subtitle streams tracked for overwrite targeting. */
+#define MAX_OVERWRITE_TARGETS 16
+
+/*
+ * Tracks an input subtitle stream that may be overwritten. Captures the
+ * input/output stream indices, PID, and normalized 3-letter language tag.
+ */
+typedef struct OverwriteTarget {
+    int in_stream_index;
+    int out_stream_index;
+    int pid;
+    char lang[4];
+    int used;
+} OverwriteTarget;
+
 /**
  * struct MainCtx
  * brief Main context structure for subtitle processing and rendering.
@@ -198,6 +213,11 @@ struct MainCtx {
     int64_t mux_rate;
     char *service_name;
     char *service_provider;
+    int preserve_pids;
+    int max_input_pid;
+    int overwrite_subs;
+    OverwriteTarget overwrite_targets[MAX_OVERWRITE_TARGETS];
+    int overwrite_target_count;
 };
 
 static void ctx_cleanup(struct MainCtx *ctx);
@@ -255,6 +275,36 @@ static int finalize_main(struct MainCtx *ctx, bool ctx_cleaned, int ret)
     if (!ctx_cleaned)
         ctx_cleanup(ctx);
     return ret;
+}
+
+/* Locate the first unused overwrite target matching a 3-letter language tag. */
+static OverwriteTarget *find_overwrite_target(struct MainCtx *ctx, const char *lang)
+{
+    if (!ctx || !ctx->overwrite_subs || !lang)
+        return NULL;
+
+    for (int i = 0; i < ctx->overwrite_target_count; ++i) {
+        OverwriteTarget *cand = &ctx->overwrite_targets[i];
+        if (cand->used)
+            continue;
+        if (strncasecmp(cand->lang, lang, 3) == 0)
+            return cand;
+    }
+    return NULL;
+}
+
+/* Returns non-zero when the packet's input stream index was marked for overwrite. */
+static int is_overwrite_stream(const struct MainCtx *ctx, int in_stream_index)
+{
+    if (!ctx || !ctx->overwrite_subs)
+        return 0;
+
+    for (int i = 0; i < ctx->overwrite_target_count; ++i) {
+        const OverwriteTarget *cand = &ctx->overwrite_targets[i];
+        if (cand->used && cand->in_stream_index == in_stream_index)
+            return 1;
+    }
+    return 0;
 }
 
 /**
@@ -356,6 +406,8 @@ static int cli_parse(int argc, char **argv,
         {"pid", required_argument, 0, 1023},
         {"ts-bitrate", required_argument, 0, 1024},
         {"png-only", no_argument, 0, 1025},
+        {"overwrite", no_argument, 0, 1032},
+        {"no-preserve-pids", no_argument, 0, 1031},
         {"license", no_argument, 0, 1017},
         {"help", no_argument, 0, 'h'},
         {"?", no_argument, 0, '?'},
@@ -752,6 +804,20 @@ static int cli_parse(int argc, char **argv,
                 LOG(1, "Enabled PNG-only mode (no MPEG-TS output, subtitles will be saved as PNG files)\n");
             }
             break;
+        case 1032:
+            overwrite_subs = 1;
+            if (ctx)
+                ctx->overwrite_subs = 1;
+            if (debug_level > 0) {
+                LOG(1, "Enabled subtitle overwrite mode (--overwrite)\n");
+            }
+            break;
+        case 1031:
+            preserve_pids = 0;
+            if (debug_level > 0) {
+                LOG(1, "Disabled PID preservation; libav will assign output PIDs (unless --pid overrides)\n");
+            }
+            break;
         case 1017:
             print_license();
             return 0;
@@ -862,6 +928,11 @@ static int ctx_init(struct MainCtx *ctx,
 {
     (void)subtitle_delay_ms;
 
+    ctx->preserve_pids = preserve_pids ? 1 : 0;
+    ctx->max_input_pid = ctx->preserve_pids ? 31 : 0; /* start above reserved range when preserving */
+    ctx->overwrite_subs = overwrite_subs ? 1 : 0;
+    ctx->overwrite_target_count = 0;
+
     avformat_network_init();
 
     AVFormatContext *in_fmt = NULL;
@@ -883,6 +954,12 @@ static int ctx_init(struct MainCtx *ctx,
     ctx->in_fmt = in_fmt;
 
     avformat_find_stream_info(in_fmt, NULL);
+
+    if (ctx->overwrite_subs && in_fmt->nb_programs > 1) {
+        LOG(0, "Unsupported input: %u PMTs detected (MPTS). --overwrite operates on SPTS only.\n",
+            in_fmt->nb_programs);
+        return -1;
+    }
     
     /* Validate input is MPEG-TS format */
     if (!in_fmt->iformat || !in_fmt->iformat->name || 
@@ -944,6 +1021,35 @@ static int ctx_init(struct MainCtx *ctx,
         if (av_dict_copy(&out_st->metadata, in_st->metadata, 0) < 0) {
             LOG(1, "Warning: unable to copy metadata for output stream %u\n", i);
         }
+
+        if (ctx->overwrite_subs && ctx->overwrite_target_count < MAX_OVERWRITE_TARGETS &&
+            in_st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+            AVDictionaryEntry *lang_tag = av_dict_get(in_st->metadata, "language", NULL, 0);
+            if (lang_tag && lang_tag->value && strlen(lang_tag->value) == 3) {
+                OverwriteTarget *slot = &ctx->overwrite_targets[ctx->overwrite_target_count];
+                slot->in_stream_index = (int)i;
+                slot->out_stream_index = out_st->index;
+                slot->pid = in_st->id;
+                memset(slot->lang, 0, sizeof(slot->lang));
+                strncpy(slot->lang, lang_tag->value, sizeof(slot->lang) - 1);
+                slot->used = 0;
+                ctx->overwrite_target_count++;
+                if (debug_level > 0) {
+                    LOG(1, "[overwrite] candidate lang=%s pid=%d in_idx=%d out_idx=%d\n",
+                        slot->lang, slot->pid, slot->in_stream_index, slot->out_stream_index);
+                }
+            }
+        }
+
+        if (ctx->preserve_pids && in_st->id > 0) {
+            out_st->id = in_st->id;
+            if (in_st->id > ctx->max_input_pid)
+                ctx->max_input_pid = in_st->id;
+        }
+    }
+
+    if (ctx->preserve_pids && debug_level > 0) {
+        LOG(1, "PID preservation enabled; max input PID=%d\n", ctx->max_input_pid);
     }
 
     ctx->tracks = tracks;
@@ -1130,7 +1236,7 @@ static int parse_flag_list(const char *flag_str, int track_count, int *flags, in
  *
  * Returns 0 on success, non-zero on error (invalid PID, conflicts, etc.)
  */
-static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), int ntracks,
+static int apply_custom_pids(const SubTrack tracks[], int ntracks,
                               AVFormatContext *out_fmt,
                               const char *pid_str,
                               char *errmsg)
@@ -1138,6 +1244,11 @@ static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), in
     if (!pid_str || *pid_str == '\0') {
         /* No custom PIDs specified; use defaults */
         return 0;
+    }
+
+    if (!tracks || ntracks <= 0) {
+        snprintf(errmsg, 256, "No subtitle tracks available for PID assignment");
+        return -1;
     }
 
     int *pids = NULL;
@@ -1150,7 +1261,6 @@ static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), in
         return parse_ret;
     }
 
-    /* Check for conflicts with existing PIDs in the stream */
     int *pids_to_assign = NULL;
     if (pid_count == 1) {
         /* Single PID: auto-increment for each track */
@@ -1159,7 +1269,7 @@ static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), in
             free(pids);
             return 1;
         }
-        pids_to_assign = malloc(ntracks * sizeof(int));
+        pids_to_assign = malloc((size_t)ntracks * sizeof(int));
         if (!pids_to_assign) {
             snprintf(errmsg, 256, "Out of memory");
             free(pids);
@@ -1178,17 +1288,18 @@ static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), in
         return 1;
     }
 
-    /* Check for conflicts with existing PIDs in the format context */
+    /* Check for conflicts with existing non-subtitle streams */
     for (unsigned int i = 0; i < out_fmt->nb_streams; i++) {
         AVStream *st = out_fmt->streams[i];
-        /* Check if this is NOT one of the subtitle tracks we're about to assign */
-        int is_subtitle_track = 0;
-        if ((int)i >= (int)out_fmt->nb_streams - ntracks) {
-            is_subtitle_track = 1;
+        int is_track_stream = 0;
+        for (int t = 0; t < ntracks; t++) {
+            if (tracks[t].stream == st) {
+                is_track_stream = 1;
+                break;
+            }
         }
-        
-        if (!is_subtitle_track && st->id > 0) {
-            /* This is an existing stream (audio/video), check for conflicts */
+
+        if (!is_track_stream && st->id > 0) {
             for (int j = 0; j < ntracks; j++) {
                 if (pids_to_assign[j] == st->id) {
                     snprintf(errmsg, 256, "PID %d is already in use by an existing audio or video stream", pids_to_assign[j]);
@@ -1200,16 +1311,18 @@ static int apply_custom_pids(const SubTrack tracks[] __attribute__((unused)), in
         }
     }
 
-    /* Assign the PIDs to subtitle tracks */
+    /* Assign the PIDs directly to each subtitle track stream */
     for (int i = 0; i < ntracks; i++) {
-        int track_stream_idx = out_fmt->nb_streams - ntracks + i;
-        if (track_stream_idx >= 0 && track_stream_idx < (int)out_fmt->nb_streams) {
-            AVStream *st = out_fmt->streams[track_stream_idx];
-            st->id = pids_to_assign[i];
-            if (debug_level > 0) {
-                LOG(1, "Assigned PID %d to track %d stream index %d\n",
-                    pids_to_assign[i], i, track_stream_idx);
-            }
+        if (!tracks[i].stream) {
+            snprintf(errmsg, 256, "Subtitle track %d has no associated stream for PID assignment", i);
+            if (pid_count == 1) free(pids_to_assign);
+            free(pids);
+            return -1;
+        }
+        tracks[i].stream->id = pids_to_assign[i];
+        if (debug_level > 0) {
+            LOG(1, "Assigned PID %d to track %d (stream index %d)\n",
+                pids_to_assign[i], i, tracks[i].stream->index);
         }
     }
 
@@ -1463,15 +1576,69 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
             }
         }
 #endif
-        /* Create output stream and configure codec/encoder */
-        tracks[*ntracks].stream = avformat_new_stream(ctx->out_fmt, NULL);
-        if (!tracks[*ntracks].stream) {
-            LOG(0, "Failed to create output stream for track %s\n", tok);
-            ctx_cleanup(ctx);
-            return -1;
+        /* Create or reuse output stream and configure codec/encoder */
+        OverwriteTarget *overwrite_target = find_overwrite_target(ctx, tok_lang_ptr);
+        if (overwrite_target)
+            overwrite_target->used = 1;
+
+        if (overwrite_target) {
+            tracks[*ntracks].stream = ctx->out_fmt->streams[overwrite_target->out_stream_index];
+            if (!tracks[*ntracks].stream) {
+                LOG(0, "Failed to reuse stream index %d for overwrite target (lang=%s)\n",
+                    overwrite_target->out_stream_index, tok_lang_ptr);
+                ctx_cleanup(ctx);
+                return -1;
+            }
+            if (debug_level > 0) {
+                LOG(1, "Overwriting input subtitle stream %d (PID %d, lang=%s) with track %d\n",
+                    overwrite_target->in_stream_index, overwrite_target->pid, overwrite_target->lang, *ntracks);
+            }
+        } else {
+            if (ctx->overwrite_subs) {
+                LOG(1, "--overwrite: no existing subtitle stream for lang=%s; creating new track\n", tok_lang_ptr);
+            }
+            tracks[*ntracks].stream = avformat_new_stream(ctx->out_fmt, NULL);
+            if (!tracks[*ntracks].stream) {
+                LOG(0, "Failed to create output stream for track %s\n", tok);
+                ctx_cleanup(ctx);
+                return -1;
+            }
+
+            if (ctx->preserve_pids && !pid_list) {
+                int base_pid = ctx->max_input_pid;
+                if (base_pid < 31)
+                    base_pid = 31; /* avoid reserved PIDs 0-31 */
+                int next_pid = base_pid + 1;
+                if (next_pid > 8186) {
+                    LOG(0, "PID preservation error: next subtitle PID %d exceeds maximum (8186)\n", next_pid);
+                    ctx_cleanup(ctx);
+                    return -1;
+                }
+                tracks[*ntracks].stream->id = next_pid;
+                ctx->max_input_pid = next_pid;
+                if (debug_level > 0) {
+                    LOG(1, "Assigned preserved subtitle PID %d for track %d (base max PID %d)\n",
+                        next_pid, *ntracks, base_pid);
+                }
+            }
         }
-        tracks[*ntracks].stream->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
-        tracks[*ntracks].stream->codecpar->codec_id = AV_CODEC_ID_DVB_SUBTITLE;
+
+        /* Normalize stream parameters for overwrite and fresh streams */
+        if (tracks[*ntracks].stream && tracks[*ntracks].stream->codecpar) {
+            AVCodecParameters *cp = tracks[*ntracks].stream->codecpar;
+            if (cp->extradata) {
+                av_free(cp->extradata);
+                cp->extradata = NULL;
+                cp->extradata_size = 0;
+            }
+            cp->codec_type = AVMEDIA_TYPE_SUBTITLE;
+            cp->codec_id = AV_CODEC_ID_DVB_SUBTITLE;
+            cp->codec_tag = 0;
+            cp->bit_rate = 0;
+        }
+        if (overwrite_target && overwrite_target->pid > 0)
+            tracks[*ntracks].stream->id = overwrite_target->pid;
+
         tracks[*ntracks].stream->time_base = (AVRational){1, 90000};
         av_dict_set(&tracks[*ntracks].stream->metadata, "language", tok_lang_ptr, 0);
         if (tracks[*ntracks].forced)
@@ -1601,6 +1768,14 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
         if (pkt->stream_index < 0 || pkt->stream_index >= (int)in_fmt->nb_streams) {
             LOG(2, "skipping packet with invalid stream_index=%d (nb_streams=%u)\n",
                 pkt->stream_index, in_fmt->nb_streams);
+            av_packet_unref(pkt);
+            continue;
+        }
+
+        if (is_overwrite_stream(ctx, pkt->stream_index)) {
+            if (debug_level > 1) {
+                LOG(2, "[overwrite] dropping original packet from stream %d\n", pkt->stream_index);
+            }
             av_packet_unref(pkt);
             continue;
         }

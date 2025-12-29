@@ -246,6 +246,8 @@ void print_help(void)
     printf("      --png-dir DIR           Custom directory for debug PNG output (default: pngs/)\n");
     printf("      --png-only              Output PNG files only (no MPEG-TS generation)\n");
     printf("      --pid PID[,PID2,...]    Custom PIDs for subtitle tracks (single value=auto-increment)\n");
+    printf("      --overwrite             Replace first matching input DVB subtitle track per language instead of appending\n");
+    printf("      --no-preserve-pids      Disable input PID mirroring; use legacy PID assignment unless --pid is set\n");
     printf("      --ts-bitrate BPSI       Override MPEG-TS bitrate (muxrate) in bits per second\n");
     printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
     printf("      --enc-threads N         Encoder thread count (0=auto)\n");

@@ -107,6 +107,12 @@ int video_h = 480;
  * Multiple values should be comma-separated. */
 char *pid_list = NULL;
 
+/* Disable subtitle overwrite by default; enabled with --overwrite. */
+int overwrite_subs = 0;
+
+/* Preserve input MPEG-TS PIDs by default. Can be disabled with --no-preserve-pids. */
+int preserve_pids = 1;
+
 /* Controls how the muxer bitrate should be configured (default: leave unset). */
 TsBitrateMode ts_bitrate_mode = TS_BITRATE_MODE_UNSPECIFIED;
 

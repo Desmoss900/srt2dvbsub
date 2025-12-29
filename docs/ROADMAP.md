@@ -17,24 +17,26 @@
 | **HIGH** | Core Features | Manual MPEG-TS Bitrate Control | [#2](#2-manual-mpeg-ts-bitrate-control) | v0.0.1-beta-4 | ✓ |
 | **HIGH** | Core Features | Independent PNG Output Generation | [#3](#3-independent-png-output-generation) | v0.0.1-beta-4 | ✓ |
 | **HIGH** | Core Features | Advanced Subtitle Canvas Positioning | [#4](#4-advanced-subtitle-canvas-positioning) | v0.0.1-beta-4 | ✓ |
-| **HIGH** | Batch Processing | JSON-Based Batch Processing | [#5](#5-json-based-batch-processing) | v0.0.2 | |
-| **HIGH** | Core Features | Standalone Subtitle-Only MPEG-TS Output | [#6](#6-standalone-subtitle-only-mpeg-ts-output) | v0.0.2 | |
-| **HIGH** | Rendering | Per-Track Rendering Configuration | [#7](#7-per-track-rendering-configuration) | v0.0.2 | |
-| **MEDIUM** | Rendering | Advanced Subtitle Effects and Transforms | [#8](#8-advanced-subtitle-effects-and-transforms) | v0.0.3 | |
-| **MEDIUM** | Input Formats | Multi-Format Subtitle Input Support | [#9](#9-multi-format-subtitle-input-support) | v0.0.4 | |
-| **MEDIUM** | Configuration | Rendering Presets and Profiles | [#10](#10-rendering-presets-and-profiles) | v0.0.4 | |
-| **MEDIUM** | Localization | Intelligent Multi-Language Font Selection | [#11](#11-intelligent-multi-language-font-selection) | v1.0.0 | |
-| **MEDIUM** | Broadcast | Regional dvb Compliance Profiles | [#12](#12-regional-dvb-compliance-profiles) | v1.0.0 | |
-| **MEDIUM** | Accessibility | Accessibility and Color Management | [#13](#13-accessibility-and-color-management) | v1.0.0 | |
-| **LOW** | Quality Control | Comprehensive Telemetry and Analytics | [#14](#14-comprehensive-telemetry-and-analytics) | v1.0.1 | |
-| **LOW** | Configuration | CSS-Style Subtitle Styling | [#15](#15-css-style-subtitle-styling) | v1.0.1 | |
-| **LOW** | Workflow | Subtitle Review and Approval Workflow | [#16](#16-subtitle-review-and-approval-workflow) | v1.0.1 | |
-| **LOW** | Broadcast | Broadcast-Safe Area Enforcement | [#17](#17-broadcast-safe-area-enforcement) | v1.0.2 | |
-| **LOW** | Security | Subtitle Watermarking and Fingerprinting | [#18](#18-subtitle-watermarking-and-fingerprinting) | v1.0.2 | |
-| **LOW** | Content Moderation | Advanced Text Filtering and Cleanup | [#19](#19-advanced-text-filtering-and-cleanup) | v1.1.0 | |
-| **LOW** | Quality Control | Multi-Track Consistency Verification | [#20](#20-multi-track-consistency-verification) | v1.1.0 | |
-| **LOW** | Batch Processing | Subtitle Source Verification and Manifest Generation | [#21](#21-subtitle-source-verification-and-manifest-generation) | v1.2.0 | |
-| **LOW** | Broadcast | Real-Time Live Subtitle Encoding | [#22](#22-real-time-live-subtitle-encoding) | | |
+| **HIGH** | Core Features | PID Preservation | [#5](#5-pid-preservation) | v.0.0.1 RC3 | ✓ |
+| **HIGH** | Core Features | Subtitle Track Overwrite | [#6](#6-subtitle-track-overwrite) | v.0.0.1 RC3 | ✓ |
+| **HIGH** | Batch Processing | JSON-Based Batch Processing | [#7](#7-json-based-batch-processing) | v0.0.2 | |
+| **HIGH** | Core Features | Standalone Subtitle-Only MPEG-TS Output | [#8](#8-standalone-subtitle-only-mpeg-ts-output) | v0.0.2 | |
+| **HIGH** | Rendering | Per-Track Rendering Configuration | [#9](#9-per-track-rendering-configuration) | v0.0.2 | |
+| **MEDIUM** | Rendering | Advanced Subtitle Effects and Transforms | [#10](#10-advanced-subtitle-effects-and-transforms) | v0.0.3 | |
+| **MEDIUM** | Input Formats | Multi-Format Subtitle Input Support | [#11](#11-multi-format-subtitle-input-support) | v0.0.4 | |
+| **MEDIUM** | Configuration | Rendering Presets and Profiles | [#12](#12-rendering-presets-and-profiles) | v0.0.4 | |
+| **MEDIUM** | Localization | Intelligent Multi-Language Font Selection | [#13](#13-intelligent-multi-language-font-selection) | v1.0.0 | |
+| **MEDIUM** | Broadcast | Regional dvb Compliance Profiles | [#14](#14-regional-dvb-compliance-profiles) | v1.0.0 | |
+| **MEDIUM** | Accessibility | Accessibility and Color Management | [#15](#15-accessibility-and-color-management) | v1.0.0 | |
+| **LOW** | Quality Control | Comprehensive Telemetry and Analytics | [#16](#16-comprehensive-telemetry-and-analytics) | v1.0.1 | |
+| **LOW** | Configuration | CSS-Style Subtitle Styling | [#17](#17-css-style-subtitle-styling) | v1.0.1 | |
+| **LOW** | Workflow | Subtitle Review and Approval Workflow | [#18](#18-subtitle-review-and-approval-workflow) | v1.0.1 | |
+| **LOW** | Broadcast | Broadcast-Safe Area Enforcement | [#19](#19-broadcast-safe-area-enforcement) | v1.0.2 | |
+| **LOW** | Security | Subtitle Watermarking and Fingerprinting | [#20](#20-subtitle-watermarking-and-fingerprinting) | v1.0.2 | |
+| **LOW** | Content Moderation | Advanced Text Filtering and Cleanup | [#21](#21-advanced-text-filtering-and-cleanup) | v1.1.0 | |
+| **LOW** | Quality Control | Multi-Track Consistency Verification | [#22](#22-multi-track-consistency-verification) | v1.1.0 | |
+| **LOW** | Batch Processing | Subtitle Source Verification and Manifest Generation | [#23](#23-subtitle-source-verification-and-manifest-generation) | v1.2.0 | |
+| **LOW** | Broadcast | Real-Time Live Subtitle Encoding | [#24](#24-real-time-live-subtitle-encoding) | | |
 
 </p>
 ---
@@ -360,7 +362,57 @@ The system now recognizes and respects ASS/SSA alignment tags in the format `{\a
 7. **Automatic Text Justification**: Text alignment automatically matches horizontal position (left/center/right) for both ASS tags and CLI positioning
 8. **Backward Compatible**: Non-ASS subtitles work exactly as before; ASS tags are optional enhancement
 
-### 5. JSON-Based Batch Processing
+### 5. PID Preservation - **(COMPLETE v.0.0.1 RC3)**
+Preserve incoming MPEG-TS PIDs for all existing audio and video streams, and allocate new dvbsub subtitle PIDs after the highest input PID while preventing collisions with any existing stream types.
+```
+    Example:
+    Input PIDs: video 501, audio 608, 610, 612, 614
+    Output PIDs: video 501, audio 608/610/612/614, dvbsub 615, 616
+```
+
+#### Implementation Details
+
+- **Input PID mirroring**: During input probing and stream mirroring, input stream IDs (PIDs) are copied onto the output streams and the maximum observed PID is tracked for later allocation ([src/srt2dvbsub.c](src/srt2dvbsub.c)).
+- **Default subtitle allocation**: When PID preservation is enabled and `--pid` is not provided, new dvbsub streams are assigned sequential PIDs beginning at `max_input_pid + 1` (never below 32) and capped at 8186; failures emit clear errors and abort mux setup ([src/srt2dvbsub.c](src/srt2dvbsub.c)).
+- **Collision prevention & --pid interplay**: Custom PIDs provided via `--pid` are validated against preserved A/V/data PIDs; conflicts are rejected with actionable errors before muxing proceeds ([src/srt2dvbsub.c](src/srt2dvbsub.c)).
+- **Opt-out control**: Added `--no-preserve-pids` to revert to legacy libav PID assignment while still honoring `--pid` overrides; help text documents the toggle ([src/srt2dvbsub.c](src/srt2dvbsub.c), [src/utils.c](src/utils.c)).
+- **Diagnostics**: Debug logging summarizes the max preserved PID and each auto-assigned dvbsub PID to simplify verification during testing ([src/srt2dvbsub.c](src/srt2dvbsub.c)).
+
+### 6. Subtitle Track Overwrite - **(COMPLETE v.0.0.1 RC3)**
+Allow replacing existing DVB subtitle tracks when a matching language SRT input is supplied and the `--overwrite` flag is set. Existing tracks not targeted for overwrite keep their language tags and payloads; new SRT languages not present in the input create new subtitle tracks as usual.
+```
+    Example:
+    Input: dvbsub tracks -> eng (PID 520), deu (PID 522)
+    Command: --overwrite --srt subs_eng.srt --languages eng
+    Result: eng track replaced with newly rendered subtitles; deu track preserved
+```
+
+#### Implementation Details
+
+**Core Components**
+- **CLI toggle** (`src/srt2dvbsub.c`): `--overwrite` (no_argument, case 1032) enables overwrite mode and propagates `overwrite_subs` into the runtime context.
+- **Runtime state** (`src/runtime_opts.h/c`, `src/srt2dvbsub.c`): Adds `overwrite_subs` flag and an `OverwriteTarget` table (up to 16 entries) capturing input subtitle stream index, mirrored output stream index, PID, and 3-letter language tag.
+- **Help text** (`src/utils.c`): Documents `--overwrite` behavior alongside other CLI flags.
+
+**Selection & Matching**
+- During input stream mirroring, subtitle streams with 3-letter language tags are recorded as overwrite candidates with their input index, output index, and PID.
+- For each CLI-provided SRT language, the first unused candidate with the same language is selected; additional candidates of the same language remain untouched to keep behavior deterministic.
+
+**Stream/PID Handling**
+- When a match is found, the existing output stream is reused, its codec parameters are reset to DVB subtitle defaults, and its original PID is retained; metadata language is updated from the CLI language list.
+- When no match exists for a requested language, a new subtitle stream is created. PID assignment follows the current policy: preserve-and-append when `--no-preserve-pids` is not set, or custom IDs via `--pid` if provided. The `apply_custom_pids()` helper assigns PIDs directly to the associated subtitle streams, covering both reused and newly created streams.
+
+**Guardrails & Safety**
+- Overwrite mode is SPTS-only: if multiple PMTs (MPTS) are detected, the tool emits an error and exits before processing.
+- If `--overwrite` is requested but no matching input subtitle stream exists for a given language, the encoder falls back to creating a new track and logs a warning instead of failing the run.
+
+**Packet Replacement Path**
+- Incoming MPEG-TS packets that belong to overwrite-target subtitle streams are dropped during demux/mux; only the newly encoded DVB subtitle packets are emitted on the reused stream/PID, ensuring the old payload is fully replaced.
+
+**Diagnostics**
+- Debug logging enumerates detected overwrite candidates (language, PID, input/output indices) and reports per-track decisions (overwritten vs. newly created). Packet-drop events for overwritten streams are logged at verbose debug levels.
+
+### 7. JSON-Based Batch Processing
 Add the logic and subsystem to enable batch processing of subtitle encode jobs.  The user should be able to generate a .json file with the encode input, output, srt, and config options.
 ```
     Example:
@@ -410,7 +462,7 @@ Add the logic and subsystem to enable batch processing of subtitle encode jobs. 
     }
 ```
 
-### 6. Standalone Subtitle-Only MPEG-TS Output
+### 8. Standalone Subtitle-Only MPEG-TS Output
 Implement a subsystem and logic to output a subtitle only mpeg-ts file for later muxing into a mpeg-ts A/V file.  This will be tricky as, for example, the first subtitle is 5 seconds into the actual timeline, libav starts this subtitle with a PTS of 0. A blank subtitle should be inserted with the PTS of the first video PTS detected in the source mpeg-ts A/V file so when the libav muxer generates the subtitle only mpeg-ts file, the timing will be maintained with relation to the source mpeg-ts file for the subsequent subtitles. A reference input mpeg-ts file is required so subtitle timing can be calculated against the original input file.
 ```
     Example:
@@ -419,7 +471,7 @@ Implement a subsystem and logic to output a subtitle only mpeg-ts file for later
 
 ## Rendering Configuration & Styling
 
-### 7. Per-Track Rendering Configuration
+### 9. Per-Track Rendering Configuration
 Add support for per-track font/style/size configuration. Currently all rendering parameters (font, fontsize, font-style, colors, ssaa, etc.) apply globally to all subtitle tracks. Allow specifying these parameters per-track via comma-separated values or JSON config, enabling different visual treatments for different languages or purposes.
 ```
     Example (comma-separated):
@@ -431,7 +483,7 @@ Add support for per-track font/style/size configuration. Currently all rendering
     Extend batch JSON format to support per-track rendering options
 ```
 
-### 8. Advanced Subtitle Effects and Transforms
+### 10. Advanced Subtitle Effects and Transforms
 Implement additional logic to enhance visual presentation of subtitles by providing granular control over text effects. It allows users to customize shadow positioning and blur effects, apply decorative outlines and glows, and perform transformations like rotation and scaling for special effects. Users can also control text transparency and background opacity to achieve professional-looking subtitles with varied visual styles.
 
    - Text shadow direction/offset control (currently fixed)
@@ -446,7 +498,7 @@ Implement additional logic to enhance visual presentation of subtitles by provid
 
 ## Input & Format Support
 
-### 9. Multi-Format Subtitle Input Support
+### 11. Multi-Format Subtitle Input Support
 Implement additional logic to expand input flexibility by supporting popular subtitle formats beyond SRT. It includes dedicated command-line tools for each format (VTT, SUB, SSA/ASS, TTML) and a unified `text2dvbsub` tool for batch processing multiple subtitle types simultaneously. This enables seamless integration with various subtitle source pipelines and workflows.
 
    - VTT (WebVTT) - simple extension to SRT
@@ -465,7 +517,7 @@ Implement additional logic to expand input flexibility by supporting popular sub
 
 ## Configuration & Presets
 
-### 10. Rendering Presets and Profiles
+### 12. Rendering Presets and Profiles
 Implement additional logic to introduce a configuration system that allows users to save and reuse rendering settings across projects. Pre-configured profiles cover common use cases (broadcast, streaming, cinema), while custom presets enable teams to maintain consistent styling. Profiles capture all rendering parameters (fonts, colors, positioning, effects) and can be applied with a single command-line flag.
 
     - Pre-configured "profiles" for common scenarios (broadcast, streaming, cinema, etc.)
@@ -480,7 +532,7 @@ Implement additional logic to introduce a configuration system that allows users
 
 ## Localization & Internationalization
 
-### 11. Intelligent Multi-Language Font Selection
+### 13. Intelligent Multi-Language Font Selection
 Implement additional logic to intelligently select appropriate fonts for different writing systems and languages. It should automatically detect non-Latin scripts (CJK, Arabic, Cyrillic, etc.) and applies suitable fonts to ensure proper rendering. The system should support font fallback chains for mixed-language subtitles, allowing seamless display of multilingual content without manual intervention.
 
     - Detect non-Latin scripts (CJK, Arabic, Cyrillic, etc.)
@@ -493,7 +545,7 @@ Implement additional logic to intelligently select appropriate fonts for differe
 
 ## Standards & Compliance
 
-### 12. Regional dvb Compliance Profiles
+### 14. Regional dvb Compliance Profiles
 Implement additional logic to ensure subtitle compliance with regional broadcasting standards and regulations. Different regions (UK, Nordic countries, Australia, etc.) have specific dvb requirements for subtitle encoding, color palettes, and metadata. The feature automates compliance checking and applies region-specific language defaults, reducing manual configuration and ensuring broadcast-ready output for target markets.
 
     - Different standards for different regions (UK dvb, Nordic dvb, etc.)
@@ -507,7 +559,7 @@ Implement additional logic to ensure subtitle compliance with regional broadcast
 
 ## Accessibility & Usability
 
-### 13. Accessibility and Color Management
+### 15. Accessibility and Color Management
 Implement additional logic to prioritize inclusivity by providing tools for accessible subtitle creation. It includes high-contrast rendering modes for users with visual impairments, automatic colorblind-safe palette generation, and WCAG standard compliance validation. Dynamic text sizing adapts to ensure readability across different broadcast resolutions and viewing distances, making subtitles accessible to diverse audiences.
 
     - High-contrast mode for accessibility
@@ -521,7 +573,7 @@ Implement additional logic to prioritize inclusivity by providing tools for acce
 
 ## Quality Control & Analytics
 
-### 14. Comprehensive Telemetry and Analytics
+### 16. Comprehensive Telemetry and Analytics
 Implement additional logic to provide detailed insights into subtitle rendering performance and coverage. It generates frame-by-frame rendering statistics showing exactly where and how subtitles appear in the video. Analytics include subtitle coverage percentages, color distribution analysis, and file size optimization suggestions. This data helps users understand subtitle effectiveness and identify optimization opportunities.
 
     - Detailed frame-by-frame rendering statistics
@@ -535,7 +587,7 @@ Implement additional logic to provide detailed insights into subtitle rendering 
 
 ## Styling & Formatting
 
-### 15. CSS-Style Subtitle Styling
+### 17. CSS-Style Subtitle Styling
 Implement additional logic to introduce familiar CSS-like syntax for defining subtitle styles, making it accessible to web developers and designers. Style definitions can be applied globally to all subtitle tracks or configured per-track for fine-grained control. Styles are saved as reusable definitions, enabling consistent styling across batch jobs and projects. This declarative approach simplifies subtitle styling management.
 
     - CSS-like syntax for defining subtitle styles
@@ -553,7 +605,7 @@ Implement additional logic to introduce familiar CSS-like syntax for defining su
 
 ## Professional Workflow & QA
 
-### 16. Subtitle Review and Approval Workflow
+### 18. Subtitle Review and Approval Workflow
 Implement additional logic to enable collaborative subtitle quality control and approval processes. It generates preview video clips for each subtitle segment, allowing reviewers to see subtitles in context. The system stores review comments, tracks changes and versions, and generates quality reports documenting approval status. This workflow is essential for professional content production pipelines requiring formal QA processes.
 
     - Generate preview video clips of subtitle segments
@@ -568,7 +620,7 @@ Implement additional logic to enable collaborative subtitle quality control and 
 
 ## Broadcast Standards & Safety
 
-## 17. Broadcast-Safe Area Enforcement
+## 19. Broadcast-Safe Area Enforcement
 This ensures subtitles avoid critical display areas where they might be obscured or violate broadcast standards. It allows definition of "safe zones" to prevent overlapping with channel logos, closed captioning areas, or image letterboxing. The system can auto-detect scene transitions and dynamic letterboxing, automatically repositioning subtitles to maintain visibility. Warnings alert users when subtitles would violate safe area constraints.
 
     - Define "safe areas" where subtitles should not appear (e.g., avoid top/bottom bars, channel logos)
@@ -583,7 +635,7 @@ This ensures subtitles avoid critical display areas where they might be obscured
 
 ## Security & Content Protection
 
-## 18. Subtitle Watermarking and Fingerprinting
+## 20. Subtitle Watermarking and Fingerprinting
 This adds security and tracking capabilities to subtitle streams through embedded metadata. Watermarks and fingerprints are embedded in the dvb subtitle stream using user_data fields, allowing tracking of subtitle encoding sessions, versions, and timestamps. Copyright and attribution information can be embedded for content protection. This is valuable for managing content distribution rights and tracking subtitle origins.
 
     - Embed metadata in dvb subtitle stream (via user_data fields)
@@ -598,7 +650,7 @@ This adds security and tracking capabilities to subtitle streams through embedde
 
 ## Content Moderation & Compliance
 
-## 19. Advanced Text Filtering and Cleanup
+## 21. Advanced Text Filtering and Cleanup
 This provides tools for content moderation and text normalization in subtitle streams. It allows filtering and replacing offensive or problematic words using configurable word lists, enabling content teams to maintain appropriate language standards. The system can be customized for different broadcasting regulations and audience guidelines, ensuring compliance with content policies.
 
     - Filter/replace offensive or problematic words (configurable list)
@@ -609,7 +661,7 @@ This provides tools for content moderation and text normalization in subtitle st
 
 ## Batch Processing & Verification
 
-## 20. Multi-Track Consistency Verification
+## 22. Multi-Track Consistency Verification
 This ensures quality and consistency across multilingual subtitle streams. It verifies that all subtitle tracks maintain synchronized timing structures and flags significant timing gaps or overlaps between tracks. The system detects missing subtitle tracks when audio languages exist without corresponding subtitle translations. Consistency reports provide detailed analysis to help identify synchronization issues before broadcast.
 
     - Verify consistent timing structure across all subtitle tracks
@@ -624,7 +676,7 @@ This ensures quality and consistency across multilingual subtitle streams. It ve
 
 ## Batch Integrity & Archival
 
-## 21. Subtitle Source Verification and Manifest Generation
+## 23. Subtitle Source Verification and Manifest Generation
 This provides source integrity verification and comprehensive tracking for batch subtitle jobs. It validates subtitle source files through checksum and hash verification, ensuring files haven't been corrupted or tampered with. The system can validate against known good subtitle versions for consistency. Manifest files generated for batch jobs track all source materials, versions, and metadata, creating an auditable record of subtitle encoding history for compliance and archival purposes.
 
     - Checksum/hash verification of SRT files
@@ -639,7 +691,7 @@ This provides source integrity verification and comprehensive tracking for batch
 
 ## Broadcast & Live Operations
 
-### 22. Real-Time Live Subtitle Encoding
+### 24. Real-Time Live Subtitle Encoding
 Implement additional logic to enable srt2dvbsub to process subtitle streams in real-time for live broadcasting scenarios. It accepts subtitle input from UDP sockets or similar streaming mechanisms and encodes them as subtitle events arrive, integrating seamlessly with live video encoding pipelines. This is essential for broadcast environments where subtitles are generated on-the-fly.
 
 Specification status: see [LIVE_SUBTITLING_UDP_RTP_IDEA.md](../ideas/LIVE_SUBTITLING_UDP_RTP_IDEA.md)

@@ -144,6 +144,27 @@ extern int video_h;
 extern char *pid_list;
 
 /**
+ * @brief Enable overwriting existing DVB subtitle tracks in the input.
+ *
+ * When set (via --overwrite), the muxer attempts to replace existing subtitle
+ * streams whose language tags match the provided SRT inputs. Matching is
+ * deterministic: only the first input subtitle stream with a given language
+ * is overwritten, while additional matching streams are left untouched. When
+ * disabled (default), new subtitle tracks are always appended.
+ */
+extern int overwrite_subs;
+
+/**
+ * @brief Preserve input MPEG-TS PIDs for audio/video streams.
+ *
+ * When non-zero (default), input stream PIDs are mirrored onto the output
+ * container and subtitle PIDs are auto-allocated after the highest observed
+ * input PID. When set to 0 via --no-preserve-pids, the muxer falls back to
+ * legacy libav PID assignment (unless overridden by --pid).
+ */
+extern int preserve_pids;
+
+/**
  * @brief Selects how the muxer bitrate should be configured.
  *
  * - TS_BITRATE_MODE_UNSPECIFIED: do not configure muxrate (libav defaults)
