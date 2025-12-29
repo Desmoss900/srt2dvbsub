@@ -20,7 +20,12 @@ No changes.
 
 ### Bugs Fixed
 
+None reported in this release.
+
+### New Issues
+
 None known at this time. Please report any issues encountered during testing.
+
 
 ## **v0.0.1-RC-2**
 
