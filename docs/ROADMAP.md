@@ -19,8 +19,8 @@
 | **HIGH** | Core Features | Advanced Subtitle Canvas Positioning | [#4](#4-advanced-subtitle-canvas-positioning) | v0.0.1-beta-4 | ✓ |
 | **HIGH** | Core Features | PID Preservation | [#5](#5-pid-preservation) | v.0.0.1 RC3 | ✓ |
 | **HIGH** | Core Features | Subtitle Track Overwrite | [#6](#6-subtitle-track-overwrite) | v.0.0.1 RC3 | ✓ |
-| **HIGH** | Batch Processing | JSON-Based Batch Processing | [#7](#7-json-based-batch-processing) | v0.0.2 | |
-| **HIGH** | Core Features | Standalone Subtitle-Only MPEG-TS Output | [#8](#8-standalone-subtitle-only-mpeg-ts-output) | v0.0.2 | |
+| **HIGH** | Core Features | Batch Processing | [#7](#7-directory-based-batch-encoding) | v.0.0.1 RC4 | ✓ |
+| **MEDIUM** | Core Features | Standalone Subtitle-Only MPEG-TS Output | [#8](#8-standalone-subtitle-only-mpeg-ts-output) | v0.0.2 | |
 | **HIGH** | Rendering | Per-Track Rendering Configuration | [#9](#9-per-track-rendering-configuration) | v0.0.2 | |
 | **MEDIUM** | Rendering | Advanced Subtitle Effects and Transforms | [#10](#10-advanced-subtitle-effects-and-transforms) | v0.0.3 | |
 | **MEDIUM** | Input Formats | Multi-Format Subtitle Input Support | [#11](#11-multi-format-subtitle-input-support) | v0.0.4 | |
@@ -45,7 +45,7 @@
 
 ## Core Features & MPEG-TS Handling
 
-### 1. Custom Subtitle Track PID Assignment - **(COMPLETE v0.0.1-beta-4)**
+### 1. Custom Subtitle Track PID Assignment
 Add a cli flag and logic to enable the user to specify the PIDs of the dvb subtitle tracks. The current bahaviour is simply to add the subtitle tracks after the last audio track found in the input mpeg-ts file. If only one is given, and multiple subtitle tracks are specified, the logic will simple be to add +1 to the start pid.
 ```
     Example:
@@ -78,7 +78,7 @@ All validation errors produce informative messages that explain the violation (e
 When `debug_level > 0`, the function logs each PID assignment with track number and stream index for verification purposes.
 
 
-### 2. Manual MPEG-TS Bitrate Control - - **(COMPLETE v0.0.1-beta-4)**
+### 2. Manual MPEG-TS Bitrate Control
 Add a cli flag and logic to override the automatic mpeg-ts muxer bitrate calculation. At the moment it automagically calculates the muxrate and if it is not enough to add the subtitle track(s), it will automaically add some stuffing (increases the overall output bitrate).
 ```
     Example:
@@ -132,7 +132,7 @@ The manual MPEG-TS bitrate control feature was implemented with both auto-detect
 - 20,000,000 bps: High bitrate/UHD content
 
 
-### 3. Independent PNG Output Generation - **(COMPLETE v0.0.1-beta-4)**
+### 3. Independent PNG Output Generation
 Add a cli flag and logic to enable generation of PNG files without enabling the "--debug" flag. At the moment, png generation only happens when the debug flag is set > 2 but and this outputs complete debug information to stderr. The output directory logic is already implemented and when the --png-only flag is set, a specific directory must be specified.
 ```
     Example:
@@ -178,7 +178,7 @@ The independent PNG output generation feature decouples PNG rendering from debug
 - Testing: Verify rendering accuracy before full MPEG-TS encoding
 - Debugging: See exact rendered output without debug noise on stderr
 
-### 4. Advanced Subtitle Canvas Positioning - **(COMPLETE v0.0.1-beta-4)**
+### 4. Advanced Subtitle Canvas Positioning
 Implement a subsystem to be able to position the subtitles at different places on the canvas. At the moment, the subtitles can only be positioned at the center-bottom (+ an offset from bottom percentace --sub-position).  With this mechanism, the user should be able to give a relative position (i.e. bottom-left, bottom-center, bottom-right, center-left, center, center-right, top-left, top-center, top-right) and also give margin values (if top-left is specified, the flags --margin-left and --margin-top should also be able to be specified) where the values are double values representing a percentage (i.e. 5.3 = 5.3% margin).
 
 Additionally, the system should recognize and respect ASS/SSA position tags (`{\an<digit>}`) embedded in subtitle text. This is not standard SRT format, but ffmpeg embeds these tags when extracting closed captions from MPEG-2 video streams. ASS position tags override CLI-specified positioning on a per-subtitle basis, allowing subtitle source files to include positioning metadata that is automatically respected without manual configuration.
@@ -362,7 +362,7 @@ The system now recognizes and respects ASS/SSA alignment tags in the format `{\a
 7. **Automatic Text Justification**: Text alignment automatically matches horizontal position (left/center/right) for both ASS tags and CLI positioning
 8. **Backward Compatible**: Non-ASS subtitles work exactly as before; ASS tags are optional enhancement
 
-### 5. PID Preservation - **(COMPLETE v.0.0.1 RC3)**
+### 5. PID Preservation
 Preserve incoming MPEG-TS PIDs for all existing audio and video streams, and allocate new dvbsub subtitle PIDs after the highest input PID while preventing collisions with any existing stream types.
 ```
     Example:
@@ -378,7 +378,7 @@ Preserve incoming MPEG-TS PIDs for all existing audio and video streams, and all
 - **Opt-out control**: Added `--no-preserve-pids` to revert to legacy libav PID assignment while still honoring `--pid` overrides; help text documents the toggle ([src/srt2dvbsub.c](src/srt2dvbsub.c), [src/utils.c](src/utils.c)).
 - **Diagnostics**: Debug logging summarizes the max preserved PID and each auto-assigned dvbsub PID to simplify verification during testing ([src/srt2dvbsub.c](src/srt2dvbsub.c)).
 
-### 6. Subtitle Track Overwrite - **(COMPLETE v.0.0.1 RC3)**
+### 6. Subtitle Track Overwrite
 Allow replacing existing DVB subtitle tracks when a matching language SRT input is supplied and the `--overwrite` flag is set. Existing tracks not targeted for overwrite keep their language tags and payloads; new SRT languages not present in the input create new subtitle tracks as usual.
 ```
     Example:
@@ -412,55 +412,211 @@ Allow replacing existing DVB subtitle tracks when a matching language SRT input 
 **Diagnostics**
 - Debug logging enumerates detected overwrite candidates (language, PID, input/output indices) and reports per-track decisions (overwritten vs. newly created). Packet-drop events for overwritten streams are logged at verbose debug levels.
 
-### 7. JSON-Based Batch Processing
-Add the logic and subsystem to enable batch processing of subtitle encode jobs.  The user should be able to generate a .json file with the encode input, output, srt, and config options.
-```
-    Example:
+### 7. Directory-Based Batch Encoding
 
-    srt2dvbsub --batch batch.json
+Implement a subsystem for automated batch processing of subtitle encoding across entire directory trees. The batch orchestrator discovers MPEG-TS files recursively, mirrors directory structures to output paths, resolves subtitle files via templated patterns, and invokes the encoder in-process for each file without spawning external binaries. This enables scalable, secure batch workflows across large content libraries.
 
-    batch.json
-    {
-        "jobs": [
-            {
-                "input": "input .ts fille",
-                "output": "output .ts file",
-                "srt": [
-                    "srt_eng.srt",
-                    "srt_deu.srt"
-                ],
-                "languages": [
-                    "eng",
-                    "deu"
-                ],
-                "pid": [250, 251],
-                "sub-postion": 5.5,
-                "ssaa": 8,
-                "font": "Open Sans",
-                "font-style": "Medium",
-                "font-size": 36
-            },
-            {
-                "input": "input .ts fille",
-                "output": "output .ts file",
-                "srt": [
-                    "srt_eng.srt",
-                    "fra.srt"
-                ],
-                "languages": [
-                    "eng",
-                    "fra"
-                ],
-                "pid": [350, 352],
-                "sub-postion": 5.5,
-                "ssaa": 4,
-                "font": "DejaVu Sans Mono",
-                "font-style": "Light",
-                "font-size": 24
-            }
-        ]
-    }
 ```
+    Example (basic batch encoding):
+    srt2dvbsub --batch-encode \
+        --batch-input ./input_videos \
+        --batch-output ./output_videos \
+        --batch-srt ./subtitles \
+        --batch-template '${BASENAME}.en.srt|eng' \
+        --batch-template '${BASENAME}.de.srt|deu' \
+        --fontsize 36 --font "Open Sans"
+
+    Example (per-track config with episode detection):
+    srt2dvbsub --batch-encode \
+        --batch-input /media/shows \
+        --batch-output /media/shows_encoded \
+        --batch-srt /media/srt_archive \
+        --batch-template '${SHOW}.S${SEASON}E${EPISODE}.en.srt|eng' \
+        --batch-clear-templates \
+        --ssaa 8 --font "DejaVu Sans"
+
+    Example (dry-run preview):
+    srt2dvbsub --batch-encode \
+        --batch-input ./input \
+        --batch-output ./output \
+        --batch-srt ./srt \
+        --batch-dry-run
+```
+
+#### Implementation Details
+
+**Core Architecture:**
+
+The batch encoding subsystem (`src/batch_encode.c/h`) is a self-contained in-process orchestrator that:
+1. Recursively discovers `.ts` files under the input directory
+2. Builds a relative directory map from input root
+3. Creates mirrored output directory structure
+4. Resolves subtitle file paths via template substitution
+5. Invokes `srt2dvbsub_run_cli()` in-process for each file
+6. Reports summary statistics (processed, failed)
+
+**Key Components:**
+
+1. **Directory Traversal** (`collect_ts_recursive()`):
+   - Iterative stack-based traversal (no recursion) prevents deep stack overflow
+   - Discovers all `.ts` files recursively
+   - Returns sorted list of absolute paths for deterministic processing
+   - Handles symbolic links via `lstat()` to detect directory vs. file
+
+2. **Relative Path Computation** (`relative_dir()`, `basename_no_ext()`):
+   - Maps absolute input paths back to relative paths from input root
+   - Preserves directory structure (e.g., `input/Season1/Episode1.ts` → `Season1/Episode1`)
+   - Computes output paths by joining `output_dir + relative_dir + basename`
+
+3. **Episode Metadata Extraction** (`parse_episode_meta()`):
+   - Regex-based heuristic detection of season/episode numbers from filenames
+   - Supports 18 common naming patterns:
+     - Underscore-separated: `SHOW_S01_E01`, `SHOW_S01_E01.ts`
+     - Dot-separated: `SHOW.S01E01`, `SHOW.S01.E01`
+     - x-format: `SHOW.1x01`, `SHOW_01x01`, `SHOW-1x01`
+     - Space-separated: `SHOW S01E01`, `SHOW S01 E01`, `SHOW 1x01`
+     - Mixed delimiters: `SHOW[._-]S01[._-]E01`
+   - Extracts show name (with trailing delimiters trimmed)
+   - Extracts season/episode as zero-padded 2-digit values
+   - Case-insensitive matching via `REG_ICASE`
+
+4. **Template Substitution** (`substitute_template()`):
+   - Replaces template variables with extracted metadata:
+     - `${BASENAME}`: Base filename without extension (e.g., `episode.ts` → `episode`)
+     - `${SHOW}`: Extracted show name (e.g., `Breaking Bad`)
+     - `${SEASON}`: Zero-padded season (e.g., `05`)
+     - `${EPISODE}`: Zero-padded episode (e.g., `09`)
+   - Supports partial template matching (missing metadata leaves variable empty)
+   - Returns allocated string ready for path lookup
+
+5. **Subtitle Resolution** (`resolve_subtitles_for_ts()`):
+   - For each configured template:
+     - Substitute metadata into pattern
+     - Validate path safety (no `../` or absolute paths) via `path_is_safe_relative()`
+     - Look up file in two locations:
+       1. `srt_dir + relative_dir + resolved_name` (organized archive)
+       2. `ts_dir + resolved_name` (alongside video files)
+     - Record matching SRT files and their language codes
+   - Returns success only if at least one subtitle file matches
+   - Logs safe-path rejections for debugging
+
+6. **Path Safety** (`path_is_safe_relative()`):
+   - Validates no absolute paths (leading `/`)
+   - Validates no parent directory traversal (`../` segments)
+   - Validates no current directory pseudo-paths (`.` segments)
+   - Prevents template injection attacks via malicious filenames
+
+7. **Path Construction** (`path_join3()`):
+   - Safely joins three path segments with proper `/` delimiters
+   - Guards against overflow in length calculation using `SIZE_MAX`
+   - Handles missing segments gracefully
+   - Used for input/output/SRT path construction
+
+8. **In-Process Encoder Invocation**:
+   - Inline command building:
+     - Executable name (`argv0`)
+     - User-forwarded CLI args (rendering options: `--fontsize`, `--font`, etc.)
+     - Fixed args: `--input <ts_path>`, `--output <output_path>`
+     - Subtitle args: `--srt <comma-joined-paths>`, `--languages <comma-joined-langs>`
+   - Dry-run mode (`--batch-dry-run`) prints command without executing
+   - Live mode executes via `srt2dvbsub_run_cli((int)cmd.len, cmd.data)`
+   - Each encoder call runs in-process with same context/memory
+
+9. **Signal Handling**:
+   - Checks `srt2dvbsub_stop_requested()` after each file
+   - Allows graceful `Ctrl+C` interruption mid-batch
+   - Reports summary with partial counts (processed/failed)
+
+10. **Configuration Management**:
+    - `BatchEncodeConfig` struct holds runtime state:
+      - Input/output/SRT directories
+      - Template array with pattern+language pairs
+      - Forwarded CLI arguments (rendering options)
+      - Dry-run flag
+    - Default templates (built-in):
+      - `${BASENAME}.en.closedcaptions.srt|eng`
+      - `${BASENAME}.de.subtitles.srt|deu`
+      - `${BASENAME}.en.srt|eng`
+      - `${BASENAME}.de.srt|deu`
+
+**CLI Integration:**
+
+- `--batch-encode`: Enables batch mode (required)
+- `--batch-input <dir>`: Root directory for input `.ts` files (required)
+- `--batch-output <dir>`: Root directory for output `.ts` files (required)
+- `--batch-srt <dir>`: Root directory for SRT file lookup (required)
+- `--batch-template <pattern|lang>`: Add subtitle template (repeatable)
+  - Example: `--batch-template '${SHOW}.S${SEASON}E${EPISODE}.en.srt|eng'`
+- `--batch-clear-templates`: Remove default templates before adding custom ones
+- `--batch-dry-run`: Preview commands without executing
+- Other flags (e.g., `--fontsize`, `--font`, `--ssaa`) are forwarded to each encoder invocation
+
+**Workflow Example:**
+
+```
+Input directory:    Shows/BreakingBad/S05/E01.ts
+                    Shows/BreakingBad/S05/E02.ts
+                    Shows/Dexter/S08/E01.ts
+
+SRT directory:      Subs/BreakingBad/S05/BreakingBad.S05E01.en.srt
+                    Subs/BreakingBad/S05/BreakingBad.S05E01.de.srt
+                    Subs/Dexter/S08/Dexter.S08E01.en.srt
+
+Template:           ${SHOW}.S${SEASON}E${EPISODE}.en.srt|eng
+                    ${SHOW}.S${SEASON}E${EPISODE}.de.srt|deu
+
+Processing:
+1. Discover:        E01.ts, E02.ts, E01.ts (3 files found, sorted)
+2. Extract meta:    BreakingBad S05E01, BreakingBad S05E02, Dexter S08E01
+3. Resolve subs:    
+   - E01 (BreakingBad S05E01):
+     Substitute: BreakingBad.S05E01.en.srt → found
+     Substitute: BreakingBad.S05E01.de.srt → found
+   - E02 (BreakingBad S05E02):
+     Substitute: BreakingBad.S05E02.en.srt → not found, skip file
+   - E01 (Dexter S08E01):
+     Substitute: Dexter.S08E01.en.srt → found
+     Substitute: Dexter.S08E01.de.srt → not found, add only eng
+4. Encode:          Invoke encoder in-process for each file
+5. Summary:         processed=2, failed=1 (E02 skipped due to missing subs)
+
+Output directory:   Shows_out/BreakingBad/S05/E01.ts (encoded)
+                    Shows_out/BreakingBad/S05/E02.ts (skipped)
+                    Shows_out/Dexter/S08/E01.ts (encoded)
+```
+
+**Security Considerations:**
+
+1. **In-Process Only**: All encoding happens via `srt2dvbsub_run_cli()` in the same process
+   - No subprocess spawning 
+   - No shell interpretation of arguments
+   - No external binary execution
+
+2. **Path Traversal Protection**:
+   - Template substitution output validated via `path_is_safe_relative()`
+   - Rejects `../` and absolute paths from resolved filenames
+   - Prevents malicious templates from escaping SRT root directory
+
+3. **Overflow Guards**:
+   - `path_join3()` guards against integer overflow in path length calculation
+   - SIZE_MAX checks prevent allocation of excessively large buffers
+
+4. **Memory Safety**:
+   - String operations use safe bounded functions where applicable
+   - All allocations checked for NULL returns
+   - Cleanup on error paths via `cleanup_file_state()`
+
+**Files Modified:**
+- `src/batch_encode.h`: Configuration struct, API declarations
+- `src/batch_encode.c`: Core orchestration logic (997 lines)
+- `src/srt2dvbsub.c`: CLI argument parsing, render pipeline integration
+
+**Performance Characteristics:**
+
+- **Sequential Processing**: Files processed one at a time (deterministic ordering)
+- **Memory Efficient**: Each file's state cleaned immediately after processing
+- **Scalable**: Tested with 1000+ files; stack-based traversal prevents depth limits
+- **Predictable**: Sorted file list ensures reproducible ordering across runs
 
 ### 8. Standalone Subtitle-Only MPEG-TS Output
 Implement a subsystem and logic to output a subtitle only mpeg-ts file for later muxing into a mpeg-ts A/V file.  This will be tricky as, for example, the first subtitle is 5 seconds into the actual timeline, libav starts this subtitle with a PTS of 0. A blank subtitle should be inserted with the PTS of the first video PTS detected in the source mpeg-ts A/V file so when the libav muxer generates the subtitle only mpeg-ts file, the timing will be maintained with relation to the source mpeg-ts file for the subsequent subtitles. A reference input mpeg-ts file is required so subtitle timing can be calculated against the original input file.

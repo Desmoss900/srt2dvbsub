@@ -24,7 +24,8 @@ srt2dvbsub_SOURCES = \
     src/delay_parse.c \
     src/lang_parse.c \
     src/render_params.c \
-    src/png_path.c
+    src/png_path.c \
+    src/batch_encode.c
 
 # Conditionally include libass-based renderer when configured with --enable-ass
 if USE_LIBASS
@@ -97,9 +98,6 @@ for prog in srt2dvbsub dvdbr2dvbsub; do \
         echo "warning: $$prog not found in build directory, skipping strip"; \
     fi; \
 done'
-
-# Make the default 'make' build the release artifacts.
-all-local: debug
 
 distclean-local:
 	rm -rf autom4te.cache

@@ -1,5 +1,84 @@
 # srt2dvbsub Release Notes
 
+## **v0.0.1-RC-4**
+
+### New Functionality
+
+#### 1. Directory-Based Batch Encoding
+- Added `--batch-encode` command-line flag to enable batch processing mode
+- **Required batch parameters**:
+  - `--batch-input <dir>`: Root directory for input `.ts` files
+  - `--batch-output <dir>`: Root directory for output `.ts` files
+  - `--batch-srt <dir>`: Root directory for SRT file lookup
+- **Subtitle template system**:
+  - `--batch-template <pattern|lang>`: Add subtitle filename pattern with language code (repeatable)
+  - `--batch-clear-templates`: Remove default templates before adding custom ones
+  - Default templates included: `${BASENAME}.en.closedcaptions.srt|eng`, `${BASENAME}.de.subtitles.srt|deu`, `${BASENAME}.en.srt|eng`, `${BASENAME}.de.srt|deu`
+- **Template variable substitution**:
+  - `${BASENAME}`: Input file base name without extension
+  - `${SHOW}`: Extracted TV show name from filename
+  - `${SEASON}`: Zero-padded season number (e.g., `05`)
+  - `${EPISODE}`: Zero-padded episode number (e.g., `09`)
+- **Episode metadata extraction**:
+  - Automatic detection of season/episode numbers from filenames
+  - Supports 18 common TV show naming patterns (underscore, dot, space, x-format separators)
+  - Case-insensitive pattern matching
+  - Graceful fallback when metadata cannot be extracted
+- **Operational features**:
+  - Recursive directory tree discovery and processing
+  - Output directory structure mirrors input structure
+  - Dual-location subtitle lookup (organized archive or alongside video files)
+  - In-process encoder invocation for each matched file (no external binary spawning)
+  - `--batch-dry-run`: Preview commands without executing
+  - SIGINT handling for graceful `Ctrl+C` batch interruption
+  - All other CLI flags (e.g., `--fontsize`, `--font`, `--ssaa`) forwarded to each encoder invocation
+- **Security hardening**:
+  - Path traversal validation (`path_is_safe_relative()`) prevents directory escape attacks
+  - No subprocess spawning; all encoding happens in-process
+  - Integer overflow guards in path construction
+- **Summary reporting**:
+  - Final batch summary shows processed/failed file counts
+  - Per-file status output for tracking progress
+- **Use cases**:
+  - Bulk subtitle encoding across entire video libraries
+  - Automated workflows for TV show archives
+  - Consistent subtitle styling across multiple files
+  - Quality control preview generation with `--batch-dry-run`
+
+### Changed Functionality
+
+#### 1. Build System Improvements
+- Fixed `Makefile.am` to properly handle release builds:
+  - Removed automatic `all-local: debug` dependency that forced debug builds after release
+  - Users can now choose build type: `make debug && make install` or `make release && make install`
+  - Build system no longer forces unwanted builds as side effects of install
+
+#### 2. Code Quality Improvements
+- Simplified code flow and eliminated unnecessary function indirection
+- All encoding logic now directly visible in batch processing context
+
+### Bugs Fixed
+
+#### 1. Batch Encoding Compilation Errors
+- Fixed orphaned `encoder_path` references after removal of security-vulnerable `--batch-encoder` option
+  - Removed `free(cfg->encoder_path)` call in `batch_encode_free()`
+  - Changed encoder initialization from ternary `cfg->encoder_path ? cfg->encoder_path : argv0` to direct `argv0` usage
+
+#### 2. Build System Issues
+- Fixed `make release` building with DEBUG flags active
+  - Removed erroneous `all-local: debug` dependency that caused release builds to invoke debug build afterward
+  - Clarified build target independence in Makefile.am
+
+#### 3. String Vector Reference Passing
+- Fixed `strvec_join()` calls in batch encoding to properly pass struct references
+  - Changed `strvec_join(srts, ',')` to `strvec_join(&srts, ',')`
+  - Changed `strvec_join(langs, ',')` to `strvec_join(&langs, ',')`
+  - Resolved compilation errors and type mismatches
+
+### New Issues
+
+None known at this time. Please report any issues encountered during testing.
+
 ## **v0.0.1-RC-3**
 
 ### New Functionality

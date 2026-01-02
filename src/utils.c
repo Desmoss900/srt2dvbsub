@@ -226,8 +226,10 @@ void print_help(void)
 #else
     printf("      --list-fonts            (unavailable: rebuild with Fontconfig support)\n");
 #endif
+    printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
     printf("      --qc-only               Run srt file quality checks only (no mux)\n");
     printf("      --palette MODE          Palette mode (ebu-broadcast|broadcast|greyscale)\n");
+    printf("\nFont options:\n");
     printf("      --font FONTNAME         Set font family (default is DejaVu Sans)\n");
     printf("      --font-style STYLE      Optional font style variant (e.g. Bold, Italic, Light)\n");
     printf("      --font-size N           Set font size in px (overrides dynamic sizing)\n");
@@ -235,28 +237,41 @@ void print_help(void)
     printf("      --outline-color #RRGGBB Outline color (in quotes i.e. \"#808080\")\n");
     printf("      --shadow-color #AARRGGBB Shadow color (alpha optional...in quotes i.e. \"#00808080\")\n");
     printf("      --bg-color #RRGGBB      Background color (in quotes i.e. \"#000000\")\n");
+    printf("\nPositioning options:\n");
     printf("      --sub-position POS      Position on canvas: top-left, top-center, top-right, center-left,\n");
     printf("                              center, center-right, bottom-left, bottom-center (default), bottom-right\n");
     printf("      --margin-top PERCENT    Top margin as %% of canvas height (0.0-50.0%%, default: 3.5%%)\n");
     printf("      --margin-left PERCENT   Left margin as %% of canvas width (0.0-50.0%%, default: 2.0%%)\n");
     printf("      --margin-bottom PERCENT Bottom margin as %% of canvas height (0.0-50.0%%, default: 3.5%%)\n");
     printf("      --margin-right PERCENT  Right margin as %% of canvas width (0.0-50.0%%, default: 2.0%%)\n");
+    printf("\nRendering options:\n");
     printf("      --ssaa N                Force supersample factor (1..24) (default 4)\n");
     printf("      --no-unsharp            Disable the final unsharp pass to speed rendering\n");
     printf("      --png-dir DIR           Custom directory for debug PNG output (default: pngs/)\n");
     printf("      --png-only              Output PNG files only (no MPEG-TS generation)\n");
+    printf("      --enc-threads N         Encoder thread count (0=auto)\n");
+    printf("      --render-threads N      Parallel render workers (0=single-thread)\n");    
+    printf("\nMPEG-TS options:\n");    
     printf("      --pid PID[,PID2,...]    Custom PIDs for subtitle tracks (single value=auto-increment)\n");
     printf("      --overwrite             Replace first matching input DVB subtitle track per language instead of appending\n");
     printf("      --no-preserve-pids      Disable input PID mirroring; use legacy PID assignment unless --pid is set\n");
     printf("      --ts-bitrate BPSI       Override MPEG-TS bitrate (muxrate) in bits per second\n");
-    printf("      --delay MS[,MS2,...]    Global or per-track subtitle delay in milliseconds (comma-separated list)\n");
-    printf("      --enc-threads N         Encoder thread count (0=auto)\n");
-    printf("      --render-threads N      Parallel render workers (0=single-thread)\n");
+    printf("\nBatch mode options:\n");
+    printf("      --batch-encode          Enable batch directory workflow\n");
+    printf("      --batch-input DIR       Root containing .ts files (required)\n");
+    printf("      --batch-output DIR      Output root; directory structure is mirrored (required)\n");
+    printf("      --batch-srt DIR         Subtitle root searched with relative paths (required)\n");
+    printf("      --batch-clear-templates Clear default templates before adding custom ones\n");    
+    printf("      --batch-template T|L    Add template 'pattern|lang' (repeatable; defaults provided)\n");
+    // printf("      --batch-encoder PATH    Override encoder path (defaults to argv[0])\n");
+    printf("      --batch-dry-run         Show actions without invoking the encoder\n");
+    // printf("      --batch-sequential      Reserved; batch processing is currently sequential\n");
+    printf("\nOther options):\n");
     printf("      --bench                 Enable micro-bench timing output\n");
     printf("      --debug N               Set debug verbosity (0=quiet,1=errors,2=verbose)\n");
     printf("      --license               Show license information and exit\n");
     printf("  -h, --help, -?              Show this help and exit\n\n");
-    printf("Accepted DVB language codes:\n");
+    printf("Accepted ISO 639-2 language codes:\n");
     printf("  Code  English / Native\n");
     printf("  ----  ----------------\n");
     

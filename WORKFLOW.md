@@ -372,6 +372,164 @@ cp film_2021_uhd_25fps_with_subs.ts archive/film_2021/mpeg_ts_files/
 
 ---
 
+## Batch Automation Engine
+
+The `--batch-encode` mode is a built-in orchestration engine designed to process entire libraries of content automatically. It handles directory recursion, subtitle discovery, and output mirroring internally.
+
+### Core Concepts
+
+1.  **Directory Mirroring**: The engine scans the `--batch-input` directory for `.ts` files. For every file found, it replicates the relative path structure inside the `--batch-output` directory.
+2.  **Subtitle Discovery**: It attempts to find matching SRT files for each video by applying a list of "templates". It looks in two locations (in order):
+    *   The `--batch-srt` directory (using the same relative path as the video).
+    *   The source video directory (alongside the `.ts` file).
+3.  **Argument Forwarding**: Any standard srt2dvbsub arguments (like `--font`, `--ssaa`, `--delay`) passed to the batch command are forwarded to every individual file encoding job.
+
+### Directory Structure Example
+
+Assume the following input structure:
+```text
+/media/source/
+├── Movies/
+│   └── SciFi/
+│       └── SciFiMovie.2021.ts
+└── TV/
+    └── SciFiSeries/
+        └── S01/
+            └── SciFiSeries_S01E01.ts
+```
+
+And a subtitle repository:
+```text
+/media/subs/
+├── Movies/
+│   └── SciFiMovie/
+│       ├── SciFiMovie.2021.eng.srt
+│       └── SciFiMovie.2021.deu.srt
+└── TV/
+    └── SciFiSeries/
+        └── S01/
+            └── SciFiSeries_S01E01.eng.srt
+```
+
+Running a batch job with input `/media/source` and output `/media/output` will create:
+```text
+/media/output/
+├── Movies/
+│   └── SciFi/
+│       └── SciFiMovie.2021.ts  (with embedded subtitles)
+└── TV/
+    └── SciFiSeries_S01E01/
+        └── S01/
+            └── SciFiSeries_S01E01.ts (with embedded subtitles)
+```
+
+### Configuration Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--batch-encode` | Activates batch mode. Must be present. |
+| `--batch-input DIR` | The root directory to scan for `.ts` files (recursive). |
+| `--batch-output DIR` | The root directory where processed files will be written. |
+| `--batch-srt DIR` | The root directory to search for subtitles. |
+| `--batch-clear-templates` | Removes all default templates. Use this before defining custom ones. |
+| `--batch-template "FMT"` | Defines a filename pattern to search for. See "Templates" below. |
+| `--batch-dry-run` | Prints the commands that *would* be executed without running them. |
+
+### Templates and Variables
+
+Templates define how to map a video filename to a subtitle filename. A template string has the format `"PATTERN|LANG_CODE"`.
+
+**Available Variables:**
+*   `${BASENAME}`: The filename of the video without the extension (e.g., `Movie.2021`).
+*   `${SHOW}`: Parsed show name (heuristic).
+*   `${SEASON}`: Parsed season number (e.g., `S01`).
+*   `${EPISODE}`: Parsed episode number (e.g., `E01`).
+
+**Default Templates:**
+If you do not specify any templates, the following defaults are used (legacy compatibility):
+1.  `${BASENAME}.en.subtitles.srt|eng`
+2.  `${BASENAME}.de.subtitles.srt|deu`
+3.  `${BASENAME}.en.srt|eng`
+4.  `${BASENAME}.de.srt|deu`
+
+**Custom Template Examples:**
+
+1.  **Standard Language Suffix**:
+    Matches `Movie.eng.srt` as English and `Movie.ger.srt` as German.
+    ```bash
+    --batch-clear-templates \
+    --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.en.subtitles.srt|eng" \
+    --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.de.subtitles.srt|deu"
+    ```
+
+2.  **Plex/Kodi Style**:
+    Matches `Movie.en.srt` and `Movie.de.srt`.
+    ```bash
+    --batch-clear-templates \
+    --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.en.srt|eng" \
+    --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.de.srt|deu"
+    ```
+
+### Execution Examples
+
+#### 1. The "Dry Run" (Always do this first!)
+Check what the batch engine finds before committing to hours of encoding.
+
+```bash
+srt2dvbsub \
+  --batch-encode \
+  --batch-dry-run \
+  --batch-input /mnt/media/incoming \
+  --batch-output /mnt/media/processed \
+  --batch-srt /mnt/media/subtitles
+```
+*Output will list every detected file and the exact command line that will be run.*
+
+#### 2. Standard Library Processing
+Process a library, looking for English and German subtitles, applying specific styling.
+
+```bash
+srt2dvbsub \
+  --batch-encode \
+  --batch-input /mnt/movies \
+  --batch-output /mnt/movies_bcast \
+  --batch-srt /mnt/subtitles \
+  --batch-clear-templates \
+  --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.eng.srt|eng" \
+  --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.deu.srt|deu" \
+  --font "Roboto" --fontsize 42 --ssaa 4 \
+  --sub-position bottom-center --margin-bottom 7.5 \
+  --font "Open Sans" --font-size 50
+```
+
+#### 3. TV Show Processing with Metadata
+If your filenames follow `Show.S01E01.title.ts` patterns, you can use metadata variables, though `${BASENAME}` is usually sufficient and safer.
+
+```bash
+srt2dvbsub \
+  --batch-encode \
+  --batch-input /mnt/tv \
+  --batch-output /mnt/tv_bcast \
+  --batch-srt /mnt/subs \
+  --batch-template "${SHOW} - ${SEASON}${EPISODE} - eng.srt|eng"
+```
+
+### Troubleshooting Batch Runs
+
+*   **No files processed?**
+    *   Check that input files end in `.ts`.
+    *   Check that subtitles exist and match the templates. Run with `--batch-dry-run` to see what is being looked for.
+    *   Ensure the `--batch-srt` directory structure matches the input directory structure if you are keeping subs separate.
+
+*   **Wrong Language?**
+    *   Check your template order. The first matching template for a file is used.
+    *   Verify the language code after the pipe `|` in the template string (e.g., `|eng`).
+
+*   **Permissions?**
+    *   Ensure the user running `srt2dvbsub` has write permissions to the `--batch-output` directory and read permissions for input and SRTs.
+
+---
+
 ## Troubleshooting
 
 ### Subtitles Won't Embed

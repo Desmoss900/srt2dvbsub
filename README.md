@@ -36,7 +36,9 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 -  ** **NEW** ** PID preservation: mirror input MPEG-TS PIDs for A/V streams and allocate <br/>
    subtitle PIDs for new subtitle tracks
 -  ** **NEW** ** Subtitle Track Overwrite to replace the first matching input dvbsub<br/>
-   track per language by reusing the original stream slot and PID (SPTS-only) 
+   track per language by reusing the original stream slot and PID (SPTS-only)
+-  ** **NEW** ** Directory-based batch encoding: recursively process directory trees with <br/>
+   template-based subtitle resolution and in-process encoding for automated workflows 
 
 ---
 
@@ -120,6 +122,50 @@ srt2dvbsub \
 # Validate subtitle file without encoding
 srt2dvbsub --qc-only --srt subtitles.srt --languages eng
 ```
+
+### Batch Encode Mode (directory tree)
+
+The built-in batch engine allows you to process entire directory trees of media files in a single command. It recursively scans for `.ts` files, mirrors the directory structure to the output location, and automatically resolves subtitles based on configurable templates.
+
+**Key Features:**
+*   **Recursive Scanning**: Finds all `.ts` files in the input tree.
+*   **Directory Mirroring**: Recreates the input folder structure in the output directory.
+*   **Smart Subtitle Resolution**: Looks for subtitles in a parallel subtitle directory OR alongside the video file.
+*   **In-Process Execution**: Fast and efficient; no external shell scripts required.
+*   **Dry Run Mode**: Preview exactly what will happen before processing any files.
+
+**Basic Example:**
+```bash
+srt2dvbsub \
+  --batch-encode \
+  --batch-input /media/movies \
+  --batch-output /media/movies_processed \
+  --batch-srt /media/subtitles
+```
+
+**Advanced Example with Custom Templates:**
+This example clears default templates and defines specific patterns for English and German subtitles, while applying custom font styling to all files.
+
+```bash
+srt2dvbsub \
+  --batch-encode \
+  --batch-input /media/master/HD-TV \
+  --batch-output /media/output/HD-TV \
+  --batch-srt /media/subs/HD-TV \
+  --batch-clear-templates \
+  --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.en.srt|eng" \
+  --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.de.srt|deu" \
+  --ssaa 6 --font "Open Sans" --font-style "Light" --font-size 50 \
+  --margin-bottom 7.5 --delay 100 --overwrite --no-unsharp
+```
+
+**Template Variables:**
+*   `${BASENAME}`: Filename without extension
+*   `${SHOW}`: Detected show name
+*   `${SEASON}`: Detected season (e.g., S01)
+*   `${EPISODE}`: Detected episode (e.g., E01)
+
+See `WORKFLOW.md` and `DETAILS.txt` for comprehensive documentation on batch mode configuration.
 
 ## Key Features (Extended)
 

@@ -174,6 +174,91 @@ Primary use cases:
     --srt subtitles.srt \
     --languages eng
 
+4.7 Batch Encode Mode (directory tree orchestration)
+  The built-in batch engine is a robust orchestration layer that allows srt2dvbsub
+  to process entire directory trees of content without external scripting. It is
+  designed for high-volume workflows where manual file-by-file processing is
+  impractical.
+
+  4.7.1 Core Workflow
+    1. Recursively scans `--batch-input` for all files ending in `.ts`.
+    2. For each file found, calculates its path relative to the input root.
+    3. Creates the corresponding directory structure in `--batch-output`.
+    4. Attempts to resolve subtitle files using configured templates (see 4.7.3).
+    5. If subtitles are found, invokes the encoding engine for that file.
+    6. If no subtitles are found, the file is skipped (unless configured otherwise).
+
+  4.7.2 Required Arguments
+    --batch-encode
+        Activates the batch processing mode.
+        
+    --batch-input DIR
+        The root directory containing source media. This directory is scanned
+        recursively.
+        
+    --batch-output DIR
+        The root directory where output files will be written. The internal
+        structure of the input directory is mirrored here.
+        
+    --batch-srt DIR
+        The root directory containing subtitle files. The engine looks for
+        subtitles here first, expecting the same directory structure as the input.
+
+  4.7.3 Subtitle Templates
+    Templates define how the engine finds subtitles for a given video file.
+    A template is a string in the format: "PATTERN|LANG_CODE"
+    
+    Variables:
+      ${BASENAME} - The video filename without extension (e.g., "Movie.2024")
+      ${SHOW}     - Detected show name (heuristic)
+      ${SEASON}   - Detected season number (e.g., "S01")
+      ${EPISODE}  - Detected episode number (e.g., "E01")
+      
+    Default Templates (Legacy Compatibility):
+      1. "${BASENAME}.en.subtitles.srt|eng"
+      2. "${BASENAME}.de.subtitles.srt|deu"
+      3. "${BASENAME}.en.srt|eng"
+      4. "${BASENAME}.de.srt|deu"
+      
+    Customizing Templates:
+      Use `--batch-clear-templates` to remove defaults, then add your own
+      with `--batch-template`.
+      
+      Example:
+        --batch-clear-templates
+        --batch-template "${BASENAME}.eng.srt|eng"
+        --batch-template "${BASENAME}.fra.srt|fra"
+
+  4.7.4 Resolution Logic
+    For a video file "Movies/SciFi/SciFiMovie.ts", the engine searches in this order:
+    
+    1. Parallel Directory Search:
+       Checks `--batch-srt/Movies/SciFi/` for files matching the templates.
+       
+    2. Side-by-Side Search:
+       Checks `--batch-input/Movies/SciFi/` (alongside the video) for files
+       matching the templates.
+       
+    The first match wins. This allows you to keep subtitles separate or
+    colocated with the media.
+
+  4.7.5 Operational Flags
+    --batch-dry-run
+        Prints the exact commands that would be executed to stdout without
+        actually running the encoder or creating directories. Highly recommended
+        for verifying your templates before a long run.
+
+  4.7.6 Example Command
+    srt2dvbsub \
+      --batch-encode \
+      --batch-input /media/master/HD-TV \
+      --batch-output /media/output/HD-TV \
+      --batch-srt /media/subs/HD-TV \
+      --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.en.srt|eng" \
+      --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.de.srt|deu" \
+      --delay 100 --ssaa 6 --font "Open Sans" --font-style "Light" --font-size 50 \
+      --margin-bottom 7.5 --overwrite --no-unsharp
+
 
 5. COMMAND-LINE REFERENCE
 ================================================================================
@@ -545,7 +630,76 @@ Primary use cases:
       • Warranty disclaimer
 
 
-5.10 Help & Version
+5.10 Batch Processing Options
+  --batch-encode
+      Activate batch processing mode for directory tree processing
+      • Recursively scans --batch-input for .ts files
+      • Mirrors directory structure to --batch-output
+      • Resolves subtitles using --batch-template patterns
+      • Must be accompanied by --batch-input, --batch-output, --batch-srt
+      • All other CLI flags (font, colors, delays, etc.) apply to each file
+      • Cannot be combined with --input and --output (mutually exclusive)
+      • Exit code: 0 if all files processed successfully, 1 on any error
+      
+  --batch-input DIR
+      Root directory to scan for .ts files (recursive, required with --batch-encode)
+      • Directory must exist and be readable
+      • All .ts files found recursively are processed
+      • Directory structure is preserved in --batch-output
+      • Example: "/media/movies" scans /media/movies and all subdirectories
+      
+  --batch-output DIR
+      Root directory for output files (created if necessary, required with --batch-encode)
+      • Output directory structure mirrors --batch-input
+      • Created automatically if missing
+      • Must be writable by the running user
+      • Example: If input is "/media/movies/Sci-Fi/Film.ts", output will be
+        "/media/output/Sci-Fi/Film.ts" relative to --batch-output
+      
+  --batch-srt DIR
+      Root directory containing subtitle files (required with --batch-encode)
+      • Engine looks for subtitles here first, using input-relative paths
+      • Falls back to searching alongside .ts files if not found
+      • Directory structure should mirror --batch-input for best results
+      • Example: "/media/subtitles" will look in "/media/subtitles/Sci-Fi/" for
+        subtitles matching a file in "input/Sci-Fi/"
+      
+  --batch-template "PATTERN|LANG"
+      Subtitle filename pattern with language code (repeatable, optional with --batch-encode)
+      • Format: "PATTERN|LANG_CODE" where LANG_CODE is 3-letter dvb code
+      • Available variables in PATTERN:
+        - ${BASENAME}: Video filename without extension (e.g., "Movie.2024")
+        - ${SHOW}: Detected show name (heuristic parsing)
+        - ${SEASON}: Detected season number (e.g., "S01")
+        - ${EPISODE}: Detected episode number (e.g., "E01")
+      • Multiple templates: repeatable flag, first match wins
+      • Examples:
+        - "--batch-template '${BASENAME}.eng.srt|eng'" matches "Movie.2024.eng.srt"
+        - "--batch-template '${SHOW}_S${SEASON}_E${EPISODE}.de.srt|deu'" matches "Show_S01_E01.de.srt"
+      • Default templates (if none specified):
+        1. "${BASENAME}.en.subtitles.srt|eng"
+        2. "${BASENAME}.de.subtitles.srt|deu"
+        3. "${BASENAME}.en.srt|eng"
+        4. "${BASENAME}.de.srt|deu"
+      
+  --batch-clear-templates
+      Remove all default templates before adding custom ones
+      • Use before --batch-template to replace defaults with custom patterns
+      • Without this, defaults are used alongside any custom templates
+      • Example: "--batch-clear-templates --batch-template 'custom.srt|eng'"
+      • Useful for avoiding conflicts with legacy naming conventions
+      
+  --batch-dry-run
+      Print planned encoder commands without executing them
+      • Outputs to stdout exactly what would be run for each file
+      • No files are created, no encoding happens
+      • Useful for verifying templates and argument forwarding before long runs
+      • Recommended: always run with --batch-dry-run first
+      • Shows: input file, subtitle resolution, output file, complete command line
+    
+
+
+5.11 Help & Version
   -h, --help, -?
       Show help message and exit
       • Displays all available options and language codes
@@ -613,10 +767,10 @@ Primary use cases:
     --bench
 
 
-7. dvb LANGUAGE CODES
+7. ISO 639-2 LANGUAGE CODES
 ================================================================================
 
-srt2dvbsub supports all standard dvb 3-letter ISO 639-2 language codes.
+srt2dvbsub supports a subset of the standard 3-letter ISO 639-2 language codes.
 Common codes include:
 
   eng  English / English           fin  Finnish / Suomi              heb  Hebrew / עברית               pan  Punjabi / ਪੰਜਾਬੀ

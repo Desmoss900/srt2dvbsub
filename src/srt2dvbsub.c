@@ -100,6 +100,7 @@
 #include "lang_parse.h"
 #include "render_params.h"
 #include "png_path.h"
+#include "batch_encode.h"
 
 /*
  * srt2dvbsub.c
@@ -242,6 +243,11 @@ static const char *subtitle_position_name(SubtitlePosition pos)
 
 /* signal handling: set this flag in the handler and check in main loops */
 static volatile sig_atomic_t stop_requested = 0;
+
+int srt2dvbsub_stop_requested(void)
+{
+    return stop_requested != 0;
+}
 
 /* CLI margin overrides applied after parsing; -1 means "no override" */
 static double margin_override_top = -1.0;
@@ -766,7 +772,7 @@ static int cli_parse(int argc, char **argv,
             {
                 if (strcasecmp(optarg, "auto") == 0) {
                     ts_bitrate_mode = TS_BITRATE_MODE_AUTO;
-                    if (debug_level > 0) {
+                    if (*debug_level > 0) {
                         LOG(1, "--ts-bitrate auto: will use detected input muxrate if available\n");
                     }
                     break;
@@ -792,7 +798,7 @@ static int cli_parse(int argc, char **argv,
                 
                 ts_bitrate = (int64_t)bitrate_val;
                 ts_bitrate_mode = TS_BITRATE_MODE_FIXED;
-                if (debug_level > 0) {
+                if (*debug_level > 0) {
                     LOG(1, "Set custom MPEG-TS bitrate to %" PRId64 " bps (%.2f Mbps)\n",
                         ts_bitrate, ts_bitrate / 1000000.0);
                 }
@@ -800,7 +806,7 @@ static int cli_parse(int argc, char **argv,
             break;
         case 1025:
             png_only = 1;
-            if (debug_level > 0) {
+            if (*debug_level > 0) {
                 LOG(1, "Enabled PNG-only mode (no MPEG-TS output, subtitles will be saved as PNG files)\n");
             }
             break;
@@ -808,13 +814,13 @@ static int cli_parse(int argc, char **argv,
             overwrite_subs = 1;
             if (ctx)
                 ctx->overwrite_subs = 1;
-            if (debug_level > 0) {
+            if (*debug_level > 0) {
                 LOG(1, "Enabled subtitle overwrite mode (--overwrite)\n");
             }
             break;
         case 1031:
             preserve_pids = 0;
-            if (debug_level > 0) {
+            if (*debug_level > 0) {
                 LOG(1, "Disabled PID preservation; libav will assign output PIDs (unless --pid overrides)\n");
             }
             break;
@@ -2669,12 +2675,16 @@ static int calculate_fontsize(int fontsize, int disp_h)
     return f;
 }
 
-int main(int argc, char **argv)
+int srt2dvbsub_run_cli(int argc, char **argv)
 {
     int ret = 0; /* return value: 0=ok, non-zero on error */
     bool ctx_cleaned = false;
-    
-    print_version();
+
+    /* Reset getopt state so repeated in-process invocations parse correctly. */
+    optind = 1;
+#ifdef __APPLE__
+    optreset = 1;
+#endif
 
     /* Move important cleanup-sensitive declarations here so early returns
      * don't land on uninitialized automatic variables. */
@@ -3215,4 +3225,35 @@ int main(int argc, char **argv)
     }
 
     return finalize_main(&ctx, ctx_cleaned, ret);
+}
+
+int main(int argc, char **argv)
+{
+    print_version();
+
+    /* Handle batch mode up-front to avoid consuming single-file CLI parsing. */
+    if (batch_encode_requested(argc, argv)) {
+        BatchEncodeConfig batch_cfg;
+        if (batch_encode_init_defaults(&batch_cfg) != 0) {
+            LOG(0, "Failed to initialize batch configuration\n");
+            return 1;
+        }
+
+        int batch_parse = batch_encode_parse_cli(argc, argv, &batch_cfg);
+        if (batch_parse == 0) {
+            print_help();
+            batch_encode_free(&batch_cfg);
+            return 0;
+        }
+        if (batch_parse == 1) {
+            batch_encode_free(&batch_cfg);
+            return 1;
+        }
+
+        int ret = batch_encode_run(&batch_cfg, argv[0]);
+        batch_encode_free(&batch_cfg);
+        return ret;
+    }
+
+    return srt2dvbsub_run_cli(argc, argv);
 }
