@@ -89,7 +89,7 @@ None known at this time. Please report any issues encountered during testing.
 - Added validation to prevent PID collisions and clearer diagnostics for auto-assigned subtitle PIDs.
 
 #### 2. Subtitle Track Overwrite
-- Added `--overwrite` to replace the first matching input DVB subtitle track per language instead of always appending new tracks.
+- Added `--overwrite LANGS` to replace matching input DVB subtitle track(s) for selected languages instead of always appending new tracks.
 - Reuses the original subtitle PID and stream slot when overwriting; falls back to creating a new track if no match is found, with warnings.
 - Enforces SPTS-only behavior for overwrite (errors on MPTS/multiple PMTs) and drops original subtitle packets on overwritten streams so only the new payload remains.
 

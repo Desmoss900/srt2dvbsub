@@ -379,20 +379,20 @@ Preserve incoming MPEG-TS PIDs for all existing audio and video streams, and all
 - **Diagnostics**: Debug logging summarizes the max preserved PID and each auto-assigned dvbsub PID to simplify verification during testing ([src/srt2dvbsub.c](src/srt2dvbsub.c)).
 
 ### 6. Subtitle Track Overwrite
-Allow replacing existing DVB subtitle tracks when a matching language SRT input is supplied and the `--overwrite` flag is set. Existing tracks not targeted for overwrite keep their language tags and payloads; new SRT languages not present in the input create new subtitle tracks as usual.
+Allow replacing existing DVB subtitle tracks when a matching language SRT input is supplied and the `--overwrite LANGS` flag is set. Existing tracks not targeted for overwrite keep their language tags and payloads; new SRT languages not present in the input create new subtitle tracks as usual.
 ```
     Example:
     Input: dvbsub tracks -> eng (PID 520), deu (PID 522)
-    Command: --overwrite --srt subs_eng.srt --languages eng
+    Command: --overwrite eng --srt subs_eng.srt --languages eng
     Result: eng track replaced with newly rendered subtitles; deu track preserved
 ```
 
 #### Implementation Details
 
 **Core Components**
-- **CLI toggle** (`src/srt2dvbsub.c`): `--overwrite` (no_argument, case 1032) enables overwrite mode and propagates `overwrite_subs` into the runtime context.
+- **CLI toggle** (`src/srt2dvbsub.c`): `--overwrite LANGS` (required_argument, case 1032) enables overwrite mode and propagates `overwrite_subs` into the runtime context.
 - **Runtime state** (`src/runtime_opts.h/c`, `src/srt2dvbsub.c`): Adds `overwrite_subs` flag and an `OverwriteTarget` table (up to 16 entries) capturing input subtitle stream index, mirrored output stream index, PID, and 3-letter language tag.
-- **Help text** (`src/utils.c`): Documents `--overwrite` behavior alongside other CLI flags.
+- **Help text** (`src/utils.c`): Documents `--overwrite LANGS` behavior alongside other CLI flags.
 
 **Selection & Matching**
 - During input stream mirroring, subtitle streams with 3-letter language tags are recorded as overwrite candidates with their input index, output index, and PID.

@@ -146,13 +146,22 @@ extern char *pid_list;
 /**
  * @brief Enable overwriting existing DVB subtitle tracks in the input.
  *
- * When set (via --overwrite), the muxer attempts to replace existing subtitle
- * streams whose language tags match the provided SRT inputs. Matching is
- * deterministic: only the first input subtitle stream with a given language
- * is overwritten, while additional matching streams are left untouched. When
- * disabled (default), new subtitle tracks are always appended.
+ * When set (via --overwrite LANGS), the muxer attempts to replace existing
+ * subtitle streams whose language tags match the provided overwrite language
+ * filter. Matching is deterministic: only the first input subtitle stream with
+ * a given language is overwritten, while additional matching streams are left
+ * untouched. When disabled (default), new subtitle tracks are always appended.
  */
 extern int overwrite_subs;
+
+/**
+ * @brief Optional overwrite language filter.
+ *
+ * A comma-separated list of 3-letter DVB language codes used to limit which
+ * existing subtitle streams are overwritten. If NULL or empty (or "all"), any
+ * language is eligible for overwrite.
+ */
+extern char *overwrite_langs;
 
 /**
  * @brief Preserve input MPEG-TS PIDs for audio/video streams.

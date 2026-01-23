@@ -217,6 +217,7 @@ struct MainCtx {
     int preserve_pids;
     int max_input_pid;
     int overwrite_subs;
+    char *overwrite_langs;
     OverwriteTarget overwrite_targets[MAX_OVERWRITE_TARGETS];
     int overwrite_target_count;
 };
@@ -297,6 +298,31 @@ static OverwriteTarget *find_overwrite_target(struct MainCtx *ctx, const char *l
             return cand;
     }
     return NULL;
+}
+
+/* Return non-zero if lang is permitted by the overwrite filter list. */
+static int overwrite_lang_allowed(const char *list, const char *lang)
+{
+    if (!lang || !*lang)
+        return 0;
+    if (!list || !*list)
+        return 1;
+
+    const char *p = list;
+    while (*p) {
+        while (*p == ',' || isspace((unsigned char)*p)) p++;
+        if (!*p) break;
+        const char *start = p;
+        while (*p && *p != ',') p++;
+        const char *end = p;
+        while (end > start && isspace((unsigned char)end[-1])) end--;
+        size_t len = (size_t)(end - start);
+        if (len == 1 && start[0] == '*')
+            return 1;
+        if (len == 3 && strncasecmp(start, lang, 3) == 0)
+            return 1;
+    }
+    return 0;
 }
 
 /* Returns non-zero when the packet's input stream index was marked for overwrite. */
@@ -412,7 +438,7 @@ static int cli_parse(int argc, char **argv,
         {"pid", required_argument, 0, 1023},
         {"ts-bitrate", required_argument, 0, 1024},
         {"png-only", no_argument, 0, 1025},
-        {"overwrite", no_argument, 0, 1032},
+        {"overwrite", required_argument, 0, 1032},
         {"no-preserve-pids", no_argument, 0, 1031},
         {"license", no_argument, 0, 1017},
         {"help", no_argument, 0, 'h'},
@@ -811,13 +837,40 @@ static int cli_parse(int argc, char **argv,
             }
             break;
         case 1032:
+        {
             overwrite_subs = 1;
             if (ctx)
                 ctx->overwrite_subs = 1;
+            if (!optarg || !*optarg) {
+                LOG(0, "--overwrite requires a language list (e.g. eng,deu or 'all')\n");
+                return 1;
+            }
+            if (strcasecmp(optarg, "all") == 0 || strcmp(optarg, "*") == 0) {
+                if (overwrite_langs) {
+                    free(overwrite_langs);
+                    overwrite_langs = NULL;
+                }
+                if (ctx)
+                    ctx->overwrite_langs = NULL;
+            } else {
+                char overwrite_err[512] = {0};
+                if (validate_language_list(optarg, overwrite_err) != 0) {
+                    LOG(0, "Overwrite language list validation error: %s\n", overwrite_err);
+                    return 1;
+                }
+                if (replace_strdup((const char **)&overwrite_langs, optarg) != 0) {
+                    LOG(0, "Out of memory while setting overwrite language list\n");
+                    return 1;
+                }
+                if (ctx)
+                    ctx->overwrite_langs = overwrite_langs;
+            }
             if (*debug_level > 0) {
-                LOG(1, "Enabled subtitle overwrite mode (--overwrite)\n");
+                LOG(1, "Enabled subtitle overwrite mode (--overwrite %s)\n",
+                    overwrite_langs ? overwrite_langs : "all");
             }
             break;
+        }
         case 1031:
             preserve_pids = 0;
             if (*debug_level > 0) {
@@ -937,6 +990,7 @@ static int ctx_init(struct MainCtx *ctx,
     ctx->preserve_pids = preserve_pids ? 1 : 0;
     ctx->max_input_pid = ctx->preserve_pids ? 31 : 0; /* start above reserved range when preserving */
     ctx->overwrite_subs = overwrite_subs ? 1 : 0;
+    ctx->overwrite_langs = overwrite_langs;
     ctx->overwrite_target_count = 0;
 
     avformat_network_init();
@@ -1032,6 +1086,13 @@ static int ctx_init(struct MainCtx *ctx,
             in_st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
             AVDictionaryEntry *lang_tag = av_dict_get(in_st->metadata, "language", NULL, 0);
             if (lang_tag && lang_tag->value && strlen(lang_tag->value) == 3) {
+                if (!overwrite_lang_allowed(ctx->overwrite_langs, lang_tag->value)) {
+                    if (debug_level > 1) {
+                        LOG(2, "[overwrite] skipping subtitle stream lang=%s (not in filter)\n",
+                            lang_tag->value);
+                    }
+                    continue;
+                }
                 OverwriteTarget *slot = &ctx->overwrite_targets[ctx->overwrite_target_count];
                 slot->in_stream_index = (int)i;
                 slot->out_stream_index = out_st->index;
@@ -2489,6 +2550,11 @@ static void ctx_cleanup(struct MainCtx *ctx)
     if (ctx->subtitle_delay_list) {
         free(ctx->subtitle_delay_list);
         ctx->subtitle_delay_list = NULL;
+    }
+    if (ctx->overwrite_langs) {
+        free(ctx->overwrite_langs);
+        ctx->overwrite_langs = NULL;
+        overwrite_langs = NULL;
     }
     if (ctx->delay_vals) {
         free(ctx->delay_vals);

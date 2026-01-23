@@ -4,7 +4,7 @@
 
 # srt2dvbsub
 
-**Convert SRT Subtitles to dvb Subtitles in MPEG-TS**
+**Convert SRT Subtitles to dvb Subtitles for MPEG-TS Streams**
 
 > **Disclaimer:** This project is an independent, open-source implementation with no affiliation with, endorsement from, or connection to the DVB Project or the DVB Organisation. The acronym "dvb" in this project refers exclusively to the dvb (Digital Video Broadcasting) technology standard as defined in relevant technical specifications. This tool implements the dvb subtitle specification for interoperability purposes only. Use of the term "dvb" is for technical reference and does not imply any official status or authorization from the DVB Organisation.
 
@@ -35,8 +35,8 @@ Essential for broadcasters, IPTV providers, and content distribution networks th
 
 -  ** **NEW** ** PID preservation: mirror input MPEG-TS PIDs for A/V streams and allocate <br/>
    subtitle PIDs for new subtitle tracks
--  ** **NEW** ** Subtitle Track Overwrite to replace the first matching input dvbsub<br/>
-   track per language by reusing the original stream slot and PID (SPTS-only)
+-  ** **NEW** ** Subtitle Track Overwrite to replace existing dvbsub tracks for<br/>
+  selected languages via `--overwrite LANGS` (SPTS-only)
 -  ** **NEW** ** Directory-based batch encoding: recursively process directory trees with <br/>
    template-based subtitle resolution and in-process encoding for automated workflows 
 
@@ -156,7 +156,7 @@ srt2dvbsub \
   --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.en.srt|eng" \
   --batch-template "${SHOW}_S${SEASON}_E${EPISODE}.de.srt|deu" \
   --ssaa 6 --font "Open Sans" --font-style "Light" --font-size 50 \
-  --margin-bottom 7.5 --delay 100 --overwrite --no-unsharp
+  --margin-bottom 7.5 --delay 100 --overwrite eng,deu --no-unsharp
 ```
 
 **Template Variables:**

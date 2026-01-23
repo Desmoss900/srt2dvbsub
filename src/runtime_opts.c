@@ -110,6 +110,9 @@ char *pid_list = NULL;
 /* Disable subtitle overwrite by default; enabled with --overwrite. */
 int overwrite_subs = 0;
 
+/* Optional overwrite language filter (comma-separated DVB codes). */
+char *overwrite_langs = NULL;
+
 /* Preserve input MPEG-TS PIDs by default. Can be disabled with --no-preserve-pids. */
 int preserve_pids = 1;
 

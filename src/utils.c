@@ -253,7 +253,7 @@ void print_help(void)
     printf("      --render-threads N      Parallel render workers (0=single-thread)\n");    
     printf("\nMPEG-TS options:\n");    
     printf("      --pid PID[,PID2,...]    Custom PIDs for subtitle tracks (single value=auto-increment)\n");
-    printf("      --overwrite             Replace first matching input DVB subtitle track per language instead of appending\n");
+    printf("      --overwrite LANGS       Replace existing DVB subtitle track(s) for LANGS (comma-separated or 'all')\n");
     printf("      --no-preserve-pids      Disable input PID mirroring; use legacy PID assignment unless --pid is set\n");
     printf("      --ts-bitrate BPSI       Override MPEG-TS bitrate (muxrate) in bits per second\n");
     printf("\nBatch mode options:\n");
