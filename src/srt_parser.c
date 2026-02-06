@@ -298,12 +298,36 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
             return NULL;
         }
 
-        /* Tokenize the current line by spaces */
-        char *saveptr = NULL;
-        char *tok = strtok_r(line_copy, " ", &saveptr);
-
+        /* Tokenize the current line by spaces, but avoid splitting inside tags */
+    #define TOKEN_FAIL() do { free(tok); free(line_copy); normalize_cue_text_cleanup(&buf, &out, &tmp); return NULL; } while (0)
         int has_content = 0;  /* Track if this source line has any content */
-        while (tok) {
+        char *cursor = line_copy;
+        while (cursor && *cursor) {
+            /* Skip leading spaces */
+            while (*cursor == ' ') cursor++;
+            if (!*cursor) break;
+
+            char *tok_start = cursor;
+            int in_angle = 0;
+            int in_brace = 0;
+            while (*cursor) {
+                if (!in_angle && !in_brace && *cursor == ' ') break;
+                if (*cursor == '<') in_angle = 1;
+                else if (*cursor == '>' && in_angle) in_angle = 0;
+                else if (*cursor == '{') in_brace = 1;
+                else if (*cursor == '}' && in_brace) in_brace = 0;
+                cursor++;
+            }
+
+            size_t tok_len = (size_t)(cursor - tok_start);
+            if (tok_len == 0) continue;
+            char *tok = strndup(tok_start, tok_len);
+            if (!tok) {
+                free(line_copy);
+                normalize_cue_text_cleanup(&buf, &out, &tmp);
+                return NULL;
+            }
+
             has_content = 1;
             int wordlen = visible_len(tok);
             int sym_line = (whole_cue_is_symbol && wordlen == 1);
@@ -314,9 +338,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                         size_t nc = out_cap * 2 + 16;
                         char *nt = realloc(out, nc);
                         if (!nt) {
-                            free(line_copy);
-                            normalize_cue_text_cleanup(&buf, &out, &tmp);
-                            return NULL;
+                            TOKEN_FAIL();
                         }
                         out = nt; out_cap = nc;
                     }
@@ -328,9 +350,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     size_t nc = out_len + tlen + 16;
                     char *nt = realloc(out, nc);
                     if (!nt) {
-                        free(line_copy);
-                        normalize_cue_text_cleanup(&buf, &out, &tmp);
-                        return NULL;
+                        TOKEN_FAIL();
                     }
                     out = nt; out_cap = nc;
                 }
@@ -344,9 +364,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     size_t nc = out_cap * 2 + 16;
                     char *nt = realloc(out, nc);
                     if (!nt) {
-                        free(line_copy);
-                        normalize_cue_text_cleanup(&buf, &out, &tmp);
-                        return NULL;
+                        TOKEN_FAIL();
                     }
                     out = nt; out_cap = nc;
                 }
@@ -359,9 +377,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     size_t nc = out_len + tlen + 16;
                     char *nt = realloc(out, nc);
                     if (!nt) {
-                        free(line_copy);
-                        normalize_cue_text_cleanup(&buf, &out, &tmp);
-                        return NULL;
+                        TOKEN_FAIL();
                     }
                     out = nt; out_cap = nc;
                 }
@@ -375,9 +391,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                         size_t nc = out_cap * 2 + 16;
                         char *nt = realloc(out, nc);
                         if (!nt) {
-                            free(line_copy);
-                            normalize_cue_text_cleanup(&buf, &out, &tmp);
-                            return NULL;
+                            TOKEN_FAIL();
                         }
                         out = nt; out_cap = nc;
                     }
@@ -389,9 +403,7 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                     size_t nc = out_len + tlen + 16;
                     char *nt = realloc(out, nc);
                     if (!nt) {
-                        free(line_copy);
-                        normalize_cue_text_cleanup(&buf, &out, &tmp);
-                        return NULL;
+                        TOKEN_FAIL();
                     }
                     out = nt; out_cap = nc;
                 }
@@ -400,8 +412,10 @@ static char* normalize_cue_text(const char *raw, int is_hd) {
                 line_len += wordlen;
             }
 
-            tok = strtok_r(NULL, " ", &saveptr);
+            free(tok);
         }
+
+#undef TOKEN_FAIL
 
         free(line_copy);
 
@@ -1064,18 +1078,15 @@ static int parse_srt_internal(const char *filename, SRTEntry **entries_out, FILE
 
         char *norm = NULL;
         if (use_ass_local) {
-            norm = normalize_tags(textbuf);
+            norm = strdup(textbuf);
             if (!norm) {
-                norm = strdup(textbuf);
-                if (!norm) {
-                    if (debug_level > 0) sp_log(1, "allocation failed creating norm for cue %d in '%s'\n", (int)n, filename);
-                        /* cleanup allocated entries */
-                        for (size_t i = 0; i < n; i++) free((*entries_out)[i].text);
-                    free(*entries_out);
-                    *entries_out = NULL;
-                    fclose(f);
-                    return -1;
-                }
+                if (debug_level > 0) sp_log(1, "allocation failed creating norm for cue %d in '%s'\n", (int)n, filename);
+                    /* cleanup allocated entries */
+                    for (size_t i = 0; i < n; i++) free((*entries_out)[i].text);
+                free(*entries_out);
+                *entries_out = NULL;
+                fclose(f);
+                return -1;
             }
             replace_ass_h(norm);
         } else {
@@ -1344,14 +1355,11 @@ int parse_srt_with_stats(const char *filename, SRTEntry **entries_out, FILE *qc,
 
         char *norm = NULL;
         if (cfg->use_ass) {
-            norm = normalize_tags(textbuf_sanitized);
+            norm = strdup(textbuf_sanitized);
             if (!norm) {
-                norm = strdup(textbuf_sanitized);
-                if (!norm) {
-                    if (stats_out) stats_out->skipped_cues++;
-                    free(textbuf_sanitized);
-                    continue;
-                }
+                if (stats_out) stats_out->skipped_cues++;
+                free(textbuf_sanitized);
+                continue;
             }
             replace_ass_h(norm);
         } else {
@@ -1541,10 +1549,20 @@ char* srt_html_to_ass(const char *in) {
             memcpy(color, q+1, color_len);
             color[color_len] = 0;
             unsigned rr=255,gg=255,bb=255;
-            if (color[0]=='#' && strlen(color)==7)
+            unsigned aa=255;
+            size_t clen = strlen(color);
+            if (color[0]=='#' && clen==7) {
                 sscanf(color+1,"%02x%02x%02x",&rr,&gg,&bb);
-            char tag[64];
-            snprintf(tag,sizeof(tag),"{\\c&H%02X%02X%02X&}",bb,gg,rr);
+            } else if (color[0]=='#' && clen==9) {
+                sscanf(color+1,"%02x%02x%02x%02x",&rr,&gg,&bb,&aa);
+            }
+            char tag[96];
+            if (clen==9) {
+                unsigned ass_a = 255 - (aa & 0xFF); /* ASS alpha: 00 opaque, FF transparent */
+                snprintf(tag,sizeof(tag),"{\\1c&H%02X%02X%02X&\\1a&H%02X&}",rr,gg,bb,ass_a);
+            } else {
+                snprintf(tag,sizeof(tag),"{\\1c&H%02X%02X%02X&}",rr,gg,bb);
+            }
             if (dyn_append(&out,&cap,&out_len,tag) < 0) {
                 srt_html_to_ass_cleanup(&out);
                 return NULL;
@@ -1573,6 +1591,16 @@ char* srt_html_to_ass(const char *in) {
                 return NULL;
             }
             p+=7;
+        }
+        else if (*p == '\n') {
+            if (dyn_append(&out,&cap,&out_len,"\\N") < 0) {
+                srt_html_to_ass_cleanup(&out);
+                return NULL;
+            }
+            p++;
+        }
+        else if (*p == '\r') {
+            p++;
         }
         else {
             char one[2] = { *p++, '\0' };

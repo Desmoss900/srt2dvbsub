@@ -344,6 +344,41 @@ ASS_Track* render_ass_new_track(ASS_Library *lib) {
 }
 
 /*
+ * Normalize line breaks for ASS: convert any '\n' or '\r' to "\\N".
+ * Treat CRLF as a single break. Returns a newly allocated string.
+ */
+static char *ass_normalize_linebreaks(const char *text)
+{
+    if (!text) return strdup("");
+    size_t in_len = strlen(text);
+    if (in_len == 0) return strdup("");
+
+    size_t extra = 0;
+    for (size_t i = 0; i < in_len; i++) {
+        if (text[i] == '\r' || text[i] == '\n') extra += 1; /* '\N' is 2 chars replacing 1 */
+    }
+    size_t out_len = in_len + extra + 1;
+    char *out = malloc(out_len);
+    if (!out) return NULL;
+
+    size_t j = 0;
+    for (size_t i = 0; i < in_len; i++) {
+        if (text[i] == '\r') {
+            if (i + 1 < in_len && text[i + 1] == '\n') i++;
+            out[j++] = '\\';
+            out[j++] = 'N';
+        } else if (text[i] == '\n') {
+            out[j++] = '\\';
+            out[j++] = 'N';
+        } else {
+            out[j++] = text[i];
+        }
+    }
+    out[j] = '\0';
+    return out;
+}
+
+/*
  * render_ass_add_event - append a timed text event to an ASS_Track
  *
  * Create a new event in `track` representing `text` that will be shown
@@ -413,7 +448,7 @@ void render_ass_add_event(ASS_Track *track,
     /* Duplicate the text into libass-managed memory; the caller retains
      * ownership of the original `text` pointer. Check for allocation
      * failure from strdup and avoid storing a dangling pointer. */
-    char *dup_text = strdup(text ? text : "");
+    char *dup_text = ass_normalize_linebreaks(text);
     if (!dup_text) {
         LOG(1, "render_ass_add_event: strdup failed for event %d\n", ev);
         track->events[ev].Text = NULL;
@@ -509,6 +544,7 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
     int color_cache_len = 0;
     int color_cache_evict = 0;
 
+    int dbg_tile_count = 0;
     for (ASS_Image *cur = img; cur; cur = cur->next) {
         if (cur->w <= 0 || cur->h <= 0) continue; /* skip degenerate tiles */
         if (cur->dst_x < minx) minx = cur->dst_x;
@@ -545,6 +581,16 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
     }
     /* record buffer sizes for caller validation */
     bm.idxbuf_len = pixels;
+
+    /* Coverage buffer to prevent outline/shadow from overwriting fill. */
+    uint8_t *covbuf = calloc(pixels, 1);
+    if (!covbuf) {
+        LOG(0, "render_ass_frame: calloc failed for coverage buffer (%zu pixels)\n", pixels);
+        free(bm.idxbuf);
+        bm.idxbuf = NULL;
+        bm.idxbuf_len = 0;
+        return bm;
+    }
 
     /* Allocate and initialize the palette used to map ARGB colors to
      * palette indices. We optimize by caching small palettes per
@@ -626,22 +672,29 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
      * the rest of the pipeline.
      */
     for (ASS_Image *cur = img; cur; cur = cur->next) {
-        /* Convert libass color representation to ARGB with correct alpha.
-         * libass stores color as 0xAARRGGBB but with an inverted alpha
-         * channel; invert it back to standard alpha semantics before
-         * nearest-palette lookup. */
+        /* Convert libass color representation to RGBA.
+         * Observed output uses AARRGGBB with non-inverted alpha. */
         uint32_t argb = cur->color;
-        uint8_t a = 255 - ((argb >> 24) & 0xFF);
+        uint8_t a = (argb >> 24) & 0xFF;
         uint8_t r = (argb >> 16) & 0xFF;
         uint8_t g = (argb >> 8) & 0xFF;
         uint8_t b = (argb) & 0xFF;
         uint32_t rgba = (a << 24) | (r << 16) | (g << 8) | b;
+        if (debug_level > 2 && dbg_tile_count < 6) {
+            LOG(3, "[ass] tile color raw=0x%08X -> rgba(%u,%u,%u,%u)\n",
+                argb, r, g, b, a);
+            dbg_tile_count++;
+        }
         int palidx = -1;
         for (int ci = 0; ci < color_cache_len; ci++) {
             if (color_cache[ci].rgba == rgba) { palidx = color_cache[ci].palidx; break; }
         }
         if (palidx < 0) {
             palidx = nearest_palette_index(bm.palette, 16, rgba);
+            if (debug_level > 2 && dbg_tile_count <= 6) {
+                uint32_t p = bm.palette[palidx];
+                LOG(3, "[ass] tile color mapped palidx=%d pal=0x%08X\n", palidx, p);
+            }
             if (color_cache_len < MAX_COLOR_CACHE) {
                 color_cache[color_cache_len].rgba = rgba;
                 color_cache[color_cache_len].palidx = palidx;
@@ -671,7 +724,12 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
                     int dy = cur->dst_y + yy - miny;
                     if (dx >= 0 && dx < w && dy >= 0 && dy < h) {
                         size_t idx = (size_t)dy * (size_t)w + (size_t)dx;
-                        if (idx < bm.idxbuf_len) bm.idxbuf[idx] = palidx;
+                        if (idx < bm.idxbuf_len) {
+                            if (cov > covbuf[idx]) {
+                                covbuf[idx] = cov;
+                                bm.idxbuf[idx] = palidx;
+                            }
+                        }
                     }
                 }
             }
@@ -679,6 +737,7 @@ Bitmap render_ass_frame(ASS_Renderer *renderer,
     }
 
 #undef MAX_COLOR_CACHE
+    free(covbuf);
     return bm;
 }
 

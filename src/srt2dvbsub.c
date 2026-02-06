@@ -284,6 +284,15 @@ static int finalize_main(struct MainCtx *ctx, bool ctx_cleaned, int ret)
     return ret;
 }
 
+/* Helper: only enable libass for native .ass/.ssa inputs */
+static int is_ass_file(const char *path)
+{
+    if (!path) return 0;
+    const char *dot = strrchr(path, '.');
+    if (!dot || !dot[1]) return 0;
+    return (strcasecmp(dot, ".ass") == 0 || strcasecmp(dot, ".ssa") == 0);
+}
+
 /* Locate the first unused overwrite target matching a 3-letter language tag. */
 static OverwriteTarget *find_overwrite_target(struct MainCtx *ctx, const char *lang)
 {
@@ -909,8 +918,8 @@ static int cli_parse(int argc, char **argv,
         }
     }
 
-    /* In QC-only mode, input/output files are not needed; only SRT and languages */
-    if (*qc_only) {
+    /* In QC-only or PNG-only mode, input/output files are not needed; only SRT and languages */
+    if (*qc_only || png_only) {
         if (!*srt_list || !*lang_list) {
             print_usage();
             return 1;
@@ -1525,7 +1534,12 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
                 track_delay_ms, subtitle_delay_ms);
         }
 
-        if (!use_ass) {
+        int track_use_ass = use_ass && is_ass_file(tok);
+        if (!track_use_ass && use_ass && debug_level > 0) {
+            LOG(1, "--ass enabled but '%s' is not .ass/.ssa; using Pango renderer for SRT\n", tok);
+        }
+
+        if (!track_use_ass) {
             /* Configure parser with robustness settings */
             SRTParserConfig cfg = {
                 .use_ass = 0,
@@ -1557,7 +1571,7 @@ static int ctx_parse_tracks(struct MainCtx *ctx,
             }
         }
 #ifdef HAVE_LIBASS
-        else {
+    else {
             /* Initialize libass library and renderer if not already done */
             if (!ctx->ass_lib) {
                 /* Validate and apply fallback dimensions if video_w/video_h are invalid */
@@ -2159,6 +2173,163 @@ static int ctx_demux_mux_loop(struct MainCtx *ctx, SubTrack tracks[], int ntrack
                      0 /* no pkt_count */);
         fprintf(stdout, "\n"); /* Newline to separate progress from subsequent output */
         (void)saved_time; /* Mark as used to avoid compiler warnings */
+    }
+
+    return 0;
+}
+
+/*
+ * ctx_png_only_render_all
+ *
+ * Render all cues to PNGs without demuxing an input file or encoding DVB.
+ * Intended for PNG-only preview mode when no input/output TS is provided.
+ */
+static int ctx_png_only_render_all(struct MainCtx *ctx, SubTrack tracks[], int ntracks,
+                                   int video_w, int video_h, int use_ass,
+                                   int cli_fontsize, double sub_position_pct)
+{
+    int debug_level = ctx->debug_level;
+    int bench_mode = ctx->bench_mode;
+    int render_threads = ctx->render_threads;
+    const char *cli_font = ctx->cli_font;
+    const char *cli_font_style = ctx->cli_font_style;
+    const char *cli_fgcolor = ctx->cli_fgcolor;
+    const char *cli_outlinecolor = ctx->cli_outlinecolor;
+    const char *cli_shadowcolor = ctx->cli_shadowcolor;
+    const char *cli_bgcolor = ctx->cli_bgcolor;
+    const char *palette_mode = ctx->palette_mode;
+
+    for (int t = 0; t < ntracks; t++) {
+        tracks[t].cur_sub = 0;
+        while (tracks[t].cur_sub < tracks[t].count) {
+            Bitmap bm = {0};
+            if (!use_ass) {
+                char *markup = srt_to_pango_markup(tracks[t].entries[tracks[t].cur_sub].text);
+                int64_t t1 = bench_now();
+                int render_w = video_w > 0 ? video_w : 1920;
+                int render_h = video_h > 0 ? video_h : 1080;
+                if (tracks[t].codec_ctx) {
+                    if (tracks[t].codec_ctx->width > 0)
+                        render_w = tracks[t].codec_ctx->width;
+                    if (tracks[t].codec_ctx->height > 0)
+                        render_h = tracks[t].codec_ctx->height;
+                }
+                int cue_align = tracks[t].entries[tracks[t].cur_sub].alignment;
+                int used_align = cue_align;
+                if (!use_ass && cue_align >= 7 && cue_align <= 9) {
+                    used_align = cue_align - 6; /* 7->1,8->2,9->3 */
+                    if (debug_level > 0)
+                        LOG(1, "[png-only] remapping cue align %d -> %d for DVB render\n",
+                            cue_align, used_align);
+                }
+                if (debug_level > 0) {
+                    LOG(1,
+                        "[png-only] render cue %d: render_w=%d render_h=%d codec_w=%d codec_h=%d video_w=%d video_h=%d align=%d used_align=%d\n",
+                        tracks[t].cur_sub,
+                        render_w, render_h,
+                        tracks[t].codec_ctx ? tracks[t].codec_ctx->width : -1,
+                        tracks[t].codec_ctx ? tracks[t].codec_ctx->height : -1,
+                        video_w, video_h,
+                        cue_align, used_align);
+                }
+                if ((video_w <= 0 || video_h <= 0) && debug_level > 0) {
+                    LOG(1, "[png-only] Warning: video size unknown, using fallback %dx%d for rendering\n",
+                        render_w, render_h);
+                }
+                if (render_threads > 0) {
+                    Bitmap tmpb = {0};
+                    int got = render_pool_try_get(t, tracks[t].cur_sub, &tmpb);
+                    if (got == 1) {
+                        bm = tmpb;
+                    } else if (got == 0) {
+                        bm = render_pool_render_sync(markup,
+                                                     render_w, render_h,
+                                                     cli_fontsize, cli_font,
+                                                     cli_font_style,
+                                                     cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
+                                                     &sub_pos_configs[t],
+                                                     palette_mode);
+                    } else {
+                        const int PREFETCH_WINDOW = 8;
+                        for (int pi = 0; pi < PREFETCH_WINDOW; ++pi) {
+                            int qi = tracks[t].cur_sub + pi;
+                            if (qi >= tracks[t].count)
+                                break;
+                            char *pm = srt_to_pango_markup(tracks[t].entries[qi].text);
+                            render_pool_submit_async(t, qi,
+                                                     pm,
+                                                     render_w, render_h,
+                                                     cli_fontsize, cli_font,
+                                                     cli_font_style,
+                                                     cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
+                                                     used_align,
+                                                     sub_position_pct,
+                                                     &sub_pos_configs[t],
+                                                     palette_mode);
+                            free(pm);
+                        }
+                        if (render_pool_try_get(t, tracks[t].cur_sub, &tmpb) == 1) {
+                            bm = tmpb;
+                        } else {
+                            bm = render_pool_render_sync(markup,
+                                                         render_w, render_h,
+                                                         cli_fontsize, cli_font,
+                                                         cli_font_style,
+                                                         cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
+                                                         &sub_pos_configs[t],
+                                                         palette_mode);
+                        }
+                    }
+                } else {
+                    bm = render_text_pango(markup,
+                                           render_w, render_h,
+                                           cli_fontsize, cli_font,
+                                           cli_font_style,
+                                           cli_fgcolor, cli_outlinecolor, cli_shadowcolor, cli_bgcolor,
+                                           &sub_pos_configs[t],
+                                           palette_mode);
+                }
+                if (bench_mode) {
+                    int64_t delta = bench_now() - t1;
+                    bench_add_render_us(delta);
+                    bench_inc_cues_rendered();
+                }
+                free(markup);
+            }
+#ifdef HAVE_LIBASS
+            else {
+                int64_t t1 = bench_now();
+                int64_t now_ms = tracks[t].entries[tracks[t].cur_sub].start_ms;
+                bm = render_ass_frame(ctx->ass_renderer, tracks[t].ass_track,
+                                      now_ms, palette_mode);
+                if (bench_mode) {
+                    int64_t delta = bench_now() - t1;
+                    bench_add_render_us(delta);
+                    bench_inc_cues_rendered();
+                }
+            }
+#endif
+
+            char pngfn[PATH_MAX] = "";
+            if (make_png_filename(pngfn, sizeof(pngfn), __srt_png_seq++, t, tracks[t].cur_sub) == 0) {
+                save_bitmap_png(&bm, pngfn);
+                if (debug_level > 1) {
+                    LOG(2, "[png-only] SRT bitmap saved: %s (x=%d y=%d w=%d h=%d)\n",
+                        pngfn, bm.x, bm.y, bm.w, bm.h);
+                }
+            }
+            if (debug_level > 1 && tracks[t].entries[tracks[t].cur_sub].text) {
+                LOG(2, "[png-only] cue idx=%d text='%s'\n",
+                    tracks[t].cur_sub, tracks[t].entries[tracks[t].cur_sub].text);
+            }
+
+            if (bm.idxbuf)
+                av_free(bm.idxbuf);
+            if (bm.palette)
+                av_free(bm.palette);
+
+            tracks[t].cur_sub++;
+        }
     }
 
     return 0;
@@ -3029,6 +3200,136 @@ int srt2dvbsub_run_cli(int argc, char **argv)
         return finalize_main(&ctx, ctx_cleaned, qc_ret);
     }
 
+    /* PNG-only preview flow without input/output TS */
+    if (png_only && (!input || !output))
+    {
+        char png_err[256] = {0};
+        int png_init = init_png_path(NULL, png_err);
+        if (png_init != 0) {
+            LOG(0, "PNG directory initialization error: %s\n", png_err);
+            return finalize_main(&ctx, ctx_cleaned, 1);
+        }
+
+        if (input) {
+            AVFormatContext *probe_fmt = NULL;
+            AVDictionary *fmt_opts = NULL;
+            av_dict_set(&fmt_opts, "buffer_size", "10485760", 0);
+            av_dict_set(&fmt_opts, "probesize", "10485760", 0);
+            av_dict_set(&fmt_opts, "max_analyze_duration", "30000000", 0);
+            if (avformat_open_input(&probe_fmt, input, NULL, &fmt_opts) < 0) {
+                av_dict_free(&fmt_opts);
+                LOG(0, "Cannot open input file '%s' for PNG-only preview\n", input);
+                ctx_cleanup(&ctx);
+                ctx_cleaned = true;
+                return finalize_main(&ctx, ctx_cleaned, 1);
+            }
+            av_dict_free(&fmt_opts);
+            avformat_find_stream_info(probe_fmt, NULL);
+            for (unsigned i = 0; i < probe_fmt->nb_streams; i++) {
+                AVStream *st = probe_fmt->streams[i];
+                if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+                    if (st->codecpar->width > 0)
+                        video_w = st->codecpar->width;
+                    if (st->codecpar->height > 0)
+                        video_h = st->codecpar->height;
+                    break;
+                }
+            }
+            avformat_close_input(&probe_fmt);
+        }
+
+        SubTrack tracks[8] = {0};
+        ctx.tracks = tracks;
+        ctx.ntracks = ntracks;
+        int delay_count = 0;
+        char *save_srt = NULL, *save_lang = NULL;
+        char *tok = NULL, *tok_lang = NULL;
+        int actual_fontsize = calculate_fontsize(cli_fontsize, video_h);
+
+        if (avformat_alloc_output_context2(&ctx.out_fmt, NULL, "mpegts", NULL) < 0) {
+            LOG(0, "Cannot alloc out_fmt for PNG-only preview\n");
+            ctx_cleanup(&ctx);
+            ctx_cleaned = true;
+            return finalize_main(&ctx, ctx_cleaned, 1);
+        }
+
+        const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_DVB_SUBTITLE);
+        if (!codec) {
+            LOG(1, "DVB subtitle encoder not found\n");
+            ctx_cleanup(&ctx);
+            ctx_cleaned = true;
+            return finalize_main(&ctx, ctx_cleaned, 1);
+        }
+
+        /* Tokenize SRT and language lists for the per-track loop */
+        tok = strtok_r(srt_list, ",", &save_srt);
+        tok_lang = strtok_r(lang_list, ",", &save_lang);
+
+        /* Parse per-track delay list with robust error handling */
+        if (subtitle_delay_list) {
+            int *delay_vals_local = NULL;
+            int delay_count_local = 0;
+            char delay_list_err[256] = {0};
+            int ret = parse_delay_list(subtitle_delay_list, &delay_vals_local, &delay_count_local, delay_list_err);
+            if (ret != 0) {
+                LOG(0, "Subtitle delay list parsing error: %s\n", delay_list_err);
+                free(delay_vals_local);
+                ctx_cleanup(&ctx);
+                ctx_cleaned = true;
+                return finalize_main(&ctx, ctx_cleaned, 1);
+            }
+            ctx.delay_vals = delay_vals_local;
+            delay_count = delay_count_local;
+        }
+
+        /* Initialize tracks and render PNGs */
+        int forced_flags[8] = {0};
+        int hi_flags[8] = {0};
+
+        int ret = ctx_parse_tracks(&ctx, tracks, &ntracks, tok, tok_lang, &save_srt, &save_lang,
+                       delay_count, subtitle_delay_ms, debug_level,
+                       video_w, video_h, codec, forced_flags, hi_flags, use_ass,
+                       bench_mode, qc, actual_fontsize, cli_font,
+                       cli_font_style,
+                       cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
+                       enc_threads);
+        if (ret != 0) {
+            ctx_cleaned = true;
+            return ret;
+        }
+
+#ifdef HAVE_LIBASS
+        if (use_ass) {
+            int any_ass = 0;
+            for (int i = 0; i < ntracks; i++) {
+                if (tracks[i].ass_track) { any_ass = 1; break; }
+            }
+            if (!any_ass) {
+                use_ass = 0;
+                if (debug_level > 0) {
+                    LOG(1, "No ASS tracks created; disabling libass rendering for this run\n");
+                }
+            }
+        }
+#endif
+
+        if (parse_flag_list(ctx.cli_forced_list, ntracks, forced_flags, 8) != 0 ||
+            parse_flag_list(ctx.cli_hi_list, ntracks, hi_flags, 8) != 0) {
+            LOG(0, "Failed to parse forced/hi flags for PNG-only preview\n");
+            ctx_cleanup(&ctx);
+            ctx_cleaned = true;
+            return finalize_main(&ctx, ctx_cleaned, 1);
+        }
+        for (int i = 0; i < ntracks; i++) {
+            tracks[i].forced = forced_flags[i];
+            tracks[i].hi = hi_flags[i];
+        }
+
+        ret = ctx_png_only_render_all(&ctx, tracks, ntracks, video_w, video_h, use_ass,
+                          actual_fontsize, sub_position_pct);
+        return finalize_main(&ctx, ctx_cleaned, ret);
+    }
+
     /* ---------- Normal mux flow ----------
      * Perform early initialization (open input, probe streams, create out_fmt,
      * tokenize SRT/LANG lists and parse per-track delay list). The heavy
@@ -3091,7 +3392,7 @@ int srt2dvbsub_run_cli(int argc, char **argv)
     ret = ctx_parse_tracks(&ctx, tracks, &ntracks, tok, tok_lang, &save_srt, &save_lang,
                                 delay_count, subtitle_delay_ms, debug_level,
                                 video_w, video_h, codec, forced_flags, hi_flags, use_ass,
-                                bench_mode, qc, cli_fontsize, cli_font,
+                                bench_mode, qc, actual_fontsize, cli_font,
                                 cli_font_style,
                                 cli_fgcolor, cli_outlinecolor, cli_shadowcolor,
                                 enc_threads);
@@ -3100,6 +3401,21 @@ int srt2dvbsub_run_cli(int argc, char **argv)
         ctx_cleaned = true;
         return ret;
     }
+
+#ifdef HAVE_LIBASS
+    if (use_ass) {
+        int any_ass = 0;
+        for (int i = 0; i < ntracks; i++) {
+            if (tracks[i].ass_track) { any_ass = 1; break; }
+        }
+        if (!any_ass) {
+            use_ass = 0;
+            if (debug_level > 0) {
+                LOG(1, "No ASS tracks created; disabling libass rendering for this run\n");
+            }
+        }
+    }
+#endif
 
     /* Apply custom PIDs to subtitle streams if specified */
     if (pid_list) {

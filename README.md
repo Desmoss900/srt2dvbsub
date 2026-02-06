@@ -4,7 +4,7 @@
 
 # srt2dvbsub
 
-**Convert SRT Subtitles to dvb Subtitles for MPEG-TS Streams**
+## Convert SRT Subtitles to dvb Subtitles for MPEG-TS Streams
 
 > **Disclaimer:** This project is an independent, open-source implementation with no affiliation with, endorsement from, or connection to the DVB Project or the DVB Organisation. The acronym "dvb" in this project refers exclusively to the dvb (Digital Video Broadcasting) technology standard as defined in relevant technical specifications. This tool implements the dvb subtitle specification for interoperability purposes only. Use of the term "dvb" is for technical reference and does not imply any official status or authorization from the DVB Organisation.
 

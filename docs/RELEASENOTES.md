@@ -1,5 +1,26 @@
 # srt2dvbsub Release Notes
 
+## **v0.0.1-RC-5**
+
+### New Functionality
+
+### Changed Functionality
+
+- `--png-only` quality control no longer requires input or output `.ts` files; PNG rendering can run standalone (with optional input probing only for size detection when provided).
+
+### Bugs Fixed
+
+- Fixed inline SRT `<font color>` RGBA handling so the text fill color is applied correctly (including alpha) instead of affecting outlines.
+  - **Root cause**: The `<font color>` parser mapped RGBA into an outline/alpha pathway and, in Pango markup, relied on `foreground_alpha` (which Pango ignored), so the fill color was either misdirected or dropped.
+  - **Fix**: Normalize RGBA into `#RRGGBBAA` for Pango spans and ensure inline color overrides the palette mapping so the fill color is applied directly, then mirror the same RGBA handling in the ASS conversion path so `--ass` renders the correct fill color.
+- Fixed multiline SRT entries with `<font>` tags so line breaks are preserved and lines no longer merge during normalization.
+  - **Root cause**: The normalization pass split on whitespace even inside `<font>` tags, collapsing `\n` boundaries and merging lines.
+  - **Fix**: Made the tokenizer tag-aware so it preserves newlines and avoids splitting inside tags, and ensured the ASS conversion path converts newlines to `\N` so `--ass` preserves line breaks.
+
+### New Issues
+
+None known at this time. Please report any issues encountered during testing.
+
 ## **v0.0.1-RC-4**
 
 ### New Functionality

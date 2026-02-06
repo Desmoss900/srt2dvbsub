@@ -492,7 +492,7 @@ char* srt_to_pango_markup(const char *srt_text) {
             continue;
         }
         else if (strncasecmp(p, "<font ", 6) == 0) {
-            /* Convert <font color="#RRGGBB"> to <span foreground="..."> */
+            /* Convert <font color="#RRGGBB"> or <font color="#RRGGBBAA"> to <span foreground="..."> */
             const char *end = strchr(p, '>');
             if (end) {
                 char tmp[256];
@@ -502,6 +502,20 @@ char* srt_to_pango_markup(const char *srt_text) {
                 tmp[tlen] = '\0';
                 char color[64] = "";
                 if (sscanf(tmp, "<font color=\"%63[^\"]", color) == 1) {
+                    size_t clen = strlen(color);
+                    if (clen == 9 && color[0] == '#') {
+                        /* Treat as #RRGGBBAA (RGBA), pass through as #RRGGBBAA */
+                        int n = snprintf(out, remaining, "<span foreground=\"%s\">", color);
+                        if (n < 0 || (size_t)n >= remaining) {
+                            /* stop to avoid overflow */
+                            out += remaining - 1;
+                            out[0] = '\0';
+                            break;
+                        }
+                        out += n;
+                        p = end + 1;
+                        continue;
+                    }
                     int n = snprintf(out, remaining, "<span foreground=\"%s\">", color);
                     if (n < 0 || (size_t)n >= remaining) { /* truncated or error */
                         /* stop to avoid overflow */
@@ -821,6 +835,7 @@ Bitmap render_text_pango(const char *markup,
     
     /* Use the cleaned markup (with ASS tag removed) for further processing */
     const char *final_markup = markup_copy;
+    const int has_inline_foreground = (strstr(final_markup, "foreground=\"") != NULL);
 
     /* --- Dummy layout for measurement --- */
     dummy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
@@ -1653,7 +1668,7 @@ Bitmap render_text_pango(const char *markup,
              * premultiplied ARGB). Operating in display space avoids halos
              * when compositing semi-transparent pixels into the 16-color
              * palette. Errors are propagated in display units (0..255). */
-            if (a >= 220) {
+            if (a >= 220 && !has_inline_foreground) {
                 /* For opaque pixels, always use foreground palette index.
                  * Background pixels (if any) should be transparent or rendered
                  * separately, so all rendered pixels are foreground text. */
@@ -1673,7 +1688,7 @@ Bitmap render_text_pango(const char *markup,
             if (bd > 255) bd = 255;
             /* Bias semi-transparent glyph edge pixels toward foreground
              * display color to reduce dark halos when quantizing to 16 colors. */
-            if (!skip_diffuse && a > 24 && a < 255) {
+            if (!has_inline_foreground && !skip_diffuse && a > 24 && a < 255) {
                 double rd_orig = rd;
                 double gd_orig = gd;
                 double bd_orig = bd;
